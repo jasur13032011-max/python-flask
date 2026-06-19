@@ -1,96 +1,192 @@
 # python-flask
-Siz aytgan barcha shartlar va xavfsizlik qoidalariga rioya qilgan holda, Python va Flask freymvorkida yozilgan to'liq kod namunasini taqdim etaman.
+Siz aytgan barcha shartlarni, xususan, ketma-ket bir xil xabar yuborishni bloklash (anti-spam) va oxirgi 20 ta xabarni teskari tartibda ko'rsatish mantiqlarini qamrab olgan to'liq Flask ilovasi kodi:
 
-secret_key xavfsizligini ta'minlash uchun uni GitHub'ga yuklanmaydigan .env faylida saqlaymiz va kod ichiga os.environ orqali yuklab olamiz.
-
-1. .env faylini yaratish
-Loyiha jildida .env nomli fayl yarating va uning ichiga maxfiy kalitni yozing:
-
-Code snippet
-FLASK_SECRET_KEY=boshqalardan_sir_tutiladigan_juda_uzun_va_murakkab_kalit_12345
-(Bu faylni .gitignore ichiga qo'shishni unutmang, shunda u GitHub'ga chiqib ketmaydi).
-
-2. app.py — Asosiy dastur kodi
-Ushbu kodda sessiya bilan ishlash, yo'naltirish (redirect) va login holatini tekshirish mantiqlari to'liq qamrab olingan. Ishga tushirishdan oldin pip install flask python-dotenv buyrug'i orqali kerakli kutubxonalarni o'rnatib oling.
-
+1. app.py — Server kodi
 Python
 import os
-from flask import Flask, render_template_string, request, redirect, url_for, session
-from dotenv import load_dotenv
-
-# .env faylidan o'zgaruvchilarni yuklash
-load_dotenv()
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 
 app = Flask(__name__)
+# GitHub'ga chiqib ketmasligi uchun maxfiy kalitni xavfsiz muhitdan olamiz
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default_vaqtinchalik_kalit_12345')
 
-# Secret keyni muhit o'zgaruvchilaridan olish
-app.secret_key = os.environ.get('FLASK_SECRET_KEY')
+# Ma'lumotlar bazasi o'rniga vaqtinchalik ro'yxat (In-Memory)
+# Har bir element: {"author": ..., "text": ..., "time": ...}
+MESSAGES = []
 
-# Oddiy test uchun foydalanuvchilar bazasi (namuna sifatida)
+# Test uchun foydalanuvchilar (username: password)
 USERS = {
-    "admin": "password123",
-    "user1": "mypassword"
+    "ali": "123",
+    "valisiz_kod_yoq": "parol123"
 }
 
-# 1. Login sahifasi (GET va POST)
+# 1. Bosh sahifa (Xabarlar ro'yxati va forma)
+@app.route('/')
+def index():
+    # Faqat oxirgi 20 ta xabarni olish (ro'yxat kesmasi yordamida)
+    recent_messages = MESSAGES[:20]
+    return render_template('index.html', messages=recent_messages)
+
+# 2. Login sahifasi (GET + POST)
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    # Agar foydalanuvchi allaqachon login bo'lgan bo'lsa, dashboardga o'tkazish
     if 'username' in session:
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('index'))
         
-    error = None
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Logika va parolni tekshirish
         if username in USERS and USERS[username] == password:
-            session['username'] = username  # Sessionda username saqlash
-            return redirect(url_for('dashboard'))
+            session['username'] = username
+            flash("Tizimga muvaffaqiyatli kirdingiz!", "success")
+            return redirect(url_for('index'))
         else:
-            error = "Logindagi xatolik! Username yoki parol noto'g'ri."
+            flash("Username yoki parol xato!", "danger")
             
-    # Oddiy HTML interfeys (ko'rgazmali bo'lishi uchun render_template_string ishlatildi)
-    return render_template_string('''
-        <h2>Tizimga kirish</h2>
-        {% if error %}<p style="color: red;">{{ error }}</p>{% endif %}
-        <form method="post">
-            <p><input type="text" name="username" placeholder="Username" required></p>
-            <p><input type="password" name="password" placeholder="Parol" required></p>
-            <p><button type="submit">Kirish</button></p>
-        </form>
-    ''', error=error)
+    return render_template('login.html')
 
-# 2. Dashboard sahifasi (Faqat login bo'lganlar uchun)
-@app.route('/dashboard')
-def dashboard():
-    # Login'siz kirmoqchi bo'lsa — /login ga redirect qilish
+# 3. Yangi xabar qo'shish (Faqat POST)
+@app.route('/post', methods=['POST'])
+def post_message():
+    # Login bo'lmagan foydalanuvchini tekshirish
     if 'username' not in session:
+        flash("Xabar yozish uchun avval tizimga kiring!", "danger")
         return redirect(url_for('login'))
         
-    # Sessiondan usernameni olib dashboardda ko'rsatish
-    current_user = session['username']
-    return render_template_string('''
-        <h2>Dashboard (Shaxsiy kabinet)</h2>
-        <p>Xush kelibsiz, <strong>{{ username }}</strong>!</p>
-        <p>Bu sahifani faqat tizimga kirganlargina ko'ra oladi.</p>
-        <a href="{{ url_for('logout') }}">Chiqish (Logout)</a>
-    ''', username=current_user)
+    message_text = request.form.get('text', '').strip()
+    author = session['username']
+    
+    if not message_text:
+        flash("Xabar matni bo'sh bo'lishi mumkin emas!", "warning")
+        return redirect(url_for('index'))
+        
+    # BONUS: Bir xil matnli xabarni ketma-ket ikki marta yuborishni bloklash
+    if MESSAGES:
+        last_message = MESSAGES[0] # Eng oxirgi qo'shilgan xabar har doim 0-indeksda turadi
+        if last_message['author'] == author and last_message['text'] == message_text:
+            flash("Bir xil xabarni ketma-ket yubora olmaysiz!", "danger")
+            return redirect(url_for('index'))
+            
+    # Yangi xabarni yaratish va ro'yxat BOSHIGA qo'shish (insert(0, ...))
+    new_entry = {
+        "author": author,
+        "text": message_text,
+        "time": datetime.now().strftime("%H:%M:%S | %d.%m.%Y")
+    }
+    MESSAGES.insert(0, new_entry)
+    
+    flash("Xabar muvaffaqiyatli qo'shildi!", "success")
+    return redirect(url_for('index'))
 
-# 3. Logout sahifasi
+# 4. Logout (Sessiyani tozalash)
 @app.route('/logout')
 def logout():
-    # Sessiondan usernameni o'chirish (tizimdan chiqarish)
-    session.pop('username', None)
-    # Logoutdan keyin dashboard yopiq qoladi va foydalanuvchi login sahifasiga qaytadi
-    return redirect(url_for('login'))
+    session.clear() # Sessiya butunlay tozalanadi
+    flash("Siz tizimdan chiqdingiz.", "info")
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(debug=True)
-Kod qanday ishlaydi?
-Xavfsizlik: os.environ.get('FLASK_SECRET_KEY') yordamida maxfiy kalit o'qiladi. Bu kalit brauzerdagi kukilarni (cookies) shifrlash uchun zarur.
+2. Jinja2 Shablonlari (Templates)
+Loyiha jildida templates nomli papka oching va ichiga quyidagi ikkita HTML faylni joylashtiring:
 
-Himoya (Redirect): /dashboard yo'nalishida if 'username' not in session: tekshiruvi bor. Agar foydalanuvchi login qilmasdan to'g'ridan-to'g'ri shu havolaga kirmoqchi bo'lsa, u darhol /login sahifasiga qaytarib yuboriladi.
+templates/index.html (Bosh sahifa)
+HTML
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>Bosh sahifa - Mehmonlar kitobi</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 30px; background-color: #f4f4f4; }
+        .container { max-width: 600px; background: white; padding: 20px; border-radius: 8px; }
+        .message-box { border-bottom: 1px solid #eee; padding: 10px 0; }
+        .meta { font-size: 0.85em; color: #666; }
+        .flash { padding: 10px; margin-bottom: 15px; border-radius: 4px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .danger { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Mehmonlar kitobi</h2>
 
-Logout mantiqi: /logoutga bosilganda session.pop('username') orqali session ichidagi ma'lumot tozalab tashlanadi. Buning natijasida brauzerda qayta /dashboardga kirishga urinish muvaffaqiyatsiz tugaydi va yana login so'raladi.
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    {% if session.get('username') %}
+        <p>Siz tizimdasiz: <strong>{{ session['username'] }}</strong> | <a href="{{ url_for('logout') }}">Chiqish</a></p>
+        
+        <form action="{{ url_for('post_message') }}" method="POST">
+            <textarea name="text" rows="3" style="width: 100%;" placeholder="Xabaringizni yozing..." required></textarea><br><br>
+            <button type="submit">Yuborish</button>
+        </form>
+    {% else %}
+        <p><a href="{{ url_for('login') }}">Tizimga kirish</a> orqali xabar qoldirishingiz mumkin.</p>
+    {% endif %}
+
+    <hr>
+    <h3>Oxirgi xabarlar (Maksimal 20 ta)</h3>
+    
+    {% if not messages %}
+        <p>Hozircha xabarlar yo'q.</p>
+    {% endif %}
+
+    {% for msg in messages %}
+        <div class="message-box">
+            <strong>{{ msg.author }}</strong>: {{ msg.text }}
+            <div class="meta">Vaqt: {{ msg.time }}</div>
+        </div>
+    {% endfor %}
+</div>
+</body>
+</html>
+templates/login.html (Login sahifasi)
+HTML
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>Tizimga kirish</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 50px; background-color: #f4f4f4; }
+        .login-card { max-width: 300px; background: white; padding: 25px; border-radius: 8px; margin: 0 auto; }
+        .flash { padding: 8px; color: red; margin-bottom: 10px; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+<div class="login-card">
+    <h3>Tizimga kirish</h3>
+    
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <form method="POST">
+        <p><input type="text" name="username" placeholder="Username (masalan: ali)" required style="width: 90%; padding: 5px;"></p>
+        <p><input type="password" name="password" placeholder="Parol (masalan: 123)" required style="width: 90%; padding: 5px;"></p>
+        <button type="submit" style="width: 96%; padding: 7px;">Kirish</button>
+    </form>
+    <br>
+    <a href="{{ url_for('index') }}">← Orqaga qaytish</a>
+</div>
+</body>
+</html>
+Kod mantiqining muhim jihatlari:
+Teskari Xronologiya: MESSAGES.insert(0, new_entry) yangi xabarni doim birinchi o'ringa qo'shadi. recent_messages = MESSAGES[:20] qismi esa ro'yxatdan faqat eng birinchi turgan (eng yangi) 20 ta elementni kesib oladi.
+
+Anti-Spam Blokirovka: /post yo'nalishida MESSAGES[0] (eng oxirgi qo'shilgan xabar) tekshiriladi. Agar uning muallifi va matni hozir yuborilayotgan xabar bilan bir xil bo'lsa, flash xabari qaytarilib, jarayon to'xtatiladi.
+
+Sessiya Tozaligi va Xavfsizlik: session.clear() qilinganda foydalanuvchining identifikatori butunlay o'chadi. Agar u logoutdan keyin sahifani yangilab, eski formani qayta yuborishga (Re-submit) urinsa ham, server /post ichidagi if 'username' not in session: to'sig'idan uni o'tkazmaydi.****
