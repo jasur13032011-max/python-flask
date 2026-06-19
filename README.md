@@ -1,192 +1,145 @@
 # python-flask
-Siz aytgan barcha shartlarni, xususan, ketma-ket bir xil xabar yuborishni bloklash (anti-spam) va oxirgi 20 ta xabarni teskari tartibda ko'rsatish mantiqlarini qamrab olgan to'liq Flask ilovasi kodi:
+Mana barcha talablarga javob beradigan va tushunarli qilib yozilgan Flask loyiha strukturasi va kodi. Bu oddiy eslatmalar (Notes) ilovasi bo'lib, uning yordamida loyihani tezda ishga tushirishingiz mumkin.
 
-1. app.py — Server kodi
+1. Loyiha strukturasi
+Loyiha papkasida quyidagi fayllarni yaratib oling:
+
+Plaintext
+note_app/
+│
+├── app.py
+├── templates/
+│   └── index.html
+└── README.md
+2. Kod qismi
+app.py fayli
+Bu yerda Flask ilovasi, SQLite bazasi, Note modeli va bosh sahifa logikasi joylashgan. Shuningdek, bazada ma'lumot bo'lmasa, avtomatik 3 ta seed notlarni qo'shadigan funksiya yozilgan.
+
 Python
-import os
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template
+from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
-# GitHub'ga chiqib ketmasligi uchun maxfiy kalitni xavfsiz muhitdan olamiz
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default_vaqtinchalik_kalit_12345')
 
-# Ma'lumotlar bazasi o'rniga vaqtinchalik ro'yxat (In-Memory)
-# Har bir element: {"author": ..., "text": ..., "time": ...}
-MESSAGES = []
+# SQLite ma'lumotlar bazasi sozlamalari
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Test uchun foydalanuvchilar (username: password)
-USERS = {
-    "ali": "123",
-    "valisiz_kod_yoq": "parol123"
-}
+db = SQLAlchemy(app)
 
-# 1. Bosh sahifa (Xabarlar ro'yxati va forma)
+# 1. Note modeli
+class Note(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<Note {self.title}>'
+
+# 2. Bosh sahifa (Notlar ro'yxati, yangilari yuqorida)
 @app.route('/')
 def index():
-    # Faqat oxirgi 20 ta xabarni olish (ro'yxat kesmasi yordamida)
-    recent_messages = MESSAGES[:20]
-    return render_template('index.html', messages=recent_messages)
+    # order_by(Note.created_at.desc()) yangi notlarni yuqoriga chiqaradi
+    notes = Note.query.order_by(Note.created_at.desc()).all()
+    return render_template('index.html', notes=notes)
 
-# 2. Login sahifasi (GET + POST)
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if 'username' in session:
-        return redirect(url_for('index'))
+# 3. Bazani yaratish va Seed ma'lumotlarni qo'shish funksiyasi
+def seed_data():
+    with app.app_context():
+        db.create_all()  # Bazani va jadvallarni yaratadi
         
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
-        if username in USERS and USERS[username] == password:
-            session['username'] = username
-            flash("Tizimga muvaffaqiyatli kirdingiz!", "success")
-            return redirect(url_for('index'))
-        else:
-            flash("Username yoki parol xato!", "danger")
-            
-    return render_template('login.html')
-
-# 3. Yangi xabar qo'shish (Faqat POST)
-@app.route('/post', methods=['POST'])
-def post_message():
-    # Login bo'lmagan foydalanuvchini tekshirish
-    if 'username' not in session:
-        flash("Xabar yozish uchun avval tizimga kiring!", "danger")
-        return redirect(url_for('login'))
-        
-    message_text = request.form.get('text', '').strip()
-    author = session['username']
-    
-    if not message_text:
-        flash("Xabar matni bo'sh bo'lishi mumkin emas!", "warning")
-        return redirect(url_for('index'))
-        
-    # BONUS: Bir xil matnli xabarni ketma-ket ikki marta yuborishni bloklash
-    if MESSAGES:
-        last_message = MESSAGES[0] # Eng oxirgi qo'shilgan xabar har doim 0-indeksda turadi
-        if last_message['author'] == author and last_message['text'] == message_text:
-            flash("Bir xil xabarni ketma-ket yubora olmaysiz!", "danger")
-            return redirect(url_for('index'))
-            
-    # Yangi xabarni yaratish va ro'yxat BOSHIGA qo'shish (insert(0, ...))
-    new_entry = {
-        "author": author,
-        "text": message_text,
-        "time": datetime.now().strftime("%H:%M:%S | %d.%m.%Y")
-    }
-    MESSAGES.insert(0, new_entry)
-    
-    flash("Xabar muvaffaqiyatli qo'shildi!", "success")
-    return redirect(url_for('index'))
-
-# 4. Logout (Sessiyani tozalash)
-@app.route('/logout')
-def logout():
-    session.clear() # Sessiya butunlay tozalanadi
-    flash("Siz tizimdan chiqdingiz.", "info")
-    return redirect(url_for('index'))
+        # Agar baza bo'sh bo'lsa, seed ma'lumotlarni qo'shadi
+        if Note.query.count() == 0:
+            seed_notes = [
+                Note(title="Birinchi eslatma", body="Bu loyihadagi eng birinchi seed eslatma hisoblanadi."),
+                Note(title="Xaridlar ro'yxati", body="Sut, non, tuxum va mevalar sotib olish kerak."),
+                Note(title="Flask haqida", body="Flask juda yengil va moslashuvchan mikro freymvorkdir.")
+            ]
+            db.session.bulk_save_objects(seed_notes)
+            db.session.commit()
+            print("Seed ma'lumotlar muvaffaqiyatli qo'shildi!")
 
 if __name__ == '__main__':
+    seed_data()  # Dastur ishga tushishidan oldin bazani tekshiradi
     app.run(debug=True)
-2. Jinja2 Shablonlari (Templates)
-Loyiha jildida templates nomli papka oching va ichiga quyidagi ikkita HTML faylni joylashtiring:
+templates/index.html fayli
+Notlarni chiroyli ko'rinishda chiqarish uchun oddiy HTML shablon.
 
-templates/index.html (Bosh sahifa)
 HTML
 <!DOCTYPE html>
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <title>Bosh sahifa - Mehmonlar kitobi</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mening Eslatmalarim</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 30px; background-color: #f4f4f4; }
-        .container { max-width: 600px; background: white; padding: 20px; border-radius: 8px; }
-        .message-box { border-bottom: 1px solid #eee; padding: 10px 0; }
-        .meta { font-size: 0.85em; color: #666; }
-        .flash { padding: 10px; margin-bottom: 15px; border-radius: 4px; }
-        .success { background-color: #d4edda; color: #155724; }
-        .danger { background-color: #f8d7da; color: #721c24; }
-        .info { background-color: #d1ecf1; color: #0c5460; }
+        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f9; }
+        .container { max-width: 600px; margin: auto; }
+        h1 { color: #333; text-align: center; }
+        .note-card { background: white; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .note-title { margin-0: 0; color: #007BFF; }
+        .note-date { font-size: 0.8rem; color: #777; margin-bottom: 10px; }
+        .note-body { color: #555; line-height: 1.5; }
     </style>
 </head>
 <body>
-<div class="container">
-    <h2>Mehmonlar kitobi</h2>
-
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div class="flash {{ category }}">{{ message }}</div>
+    <div class="container">
+        <h1>Eslatmalar Ro'yxati</h1>
+        <hr>
+        {% if notes %}
+            {% for note in notes %}
+                <div class="note-card">
+                    <h2 class="note-title">{{ note.title }}</h2>
+                    <div class="note-date">Yaratilgan vaqti: {{ note.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+                    <p class="note-body">{{ note.body }}</p>
+                </div>
             {% endfor %}
+        {% else %}
+            <p style="text-align:center;">Hozircha hech qanday eslatma yo'q.</p>
         {% endif %}
-    {% endwith %}
-
-    {% if session.get('username') %}
-        <p>Siz tizimdasiz: <strong>{{ session['username'] }}</strong> | <a href="{{ url_for('logout') }}">Chiqish</a></p>
-        
-        <form action="{{ url_for('post_message') }}" method="POST">
-            <textarea name="text" rows="3" style="width: 100%;" placeholder="Xabaringizni yozing..." required></textarea><br><br>
-            <button type="submit">Yuborish</button>
-        </form>
-    {% else %}
-        <p><a href="{{ url_for('login') }}">Tizimga kirish</a> orqali xabar qoldirishingiz mumkin.</p>
-    {% endif %}
-
-    <hr>
-    <h3>Oxirgi xabarlar (Maksimal 20 ta)</h3>
-    
-    {% if not messages %}
-        <p>Hozircha xabarlar yo'q.</p>
-    {% endif %}
-
-    {% for msg in messages %}
-        <div class="message-box">
-            <strong>{{ msg.author }}</strong>: {{ msg.text }}
-            <div class="meta">Vaqt: {{ msg.time }}</div>
-        </div>
-    {% endfor %}
-</div>
+    </div>
 </body>
 </html>
-templates/login.html (Login sahifasi)
-HTML
-<!DOCTYPE html>
-<html lang="uz">
-<head>
-    <meta charset="UTF-8">
-    <title>Tizimga kirish</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 50px; background-color: #f4f4f4; }
-        .login-card { max-width: 300px; background: white; padding: 25px; border-radius: 8px; margin: 0 auto; }
-        .flash { padding: 8px; color: red; margin-bottom: 10px; font-size: 0.9em; }
-    </style>
-</head>
-<body>
-<div class="login-card">
-    <h3>Tizimga kirish</h3>
-    
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div class="flash">{{ message }}</div>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
+3. README.md fayli (Ishga tushirish yo'riqnomasi)
+Siz loyiha ildiz papkasiga joylashtirishingiz kerak bo'lgan tayyor markdown matni:
 
-    <form method="POST">
-        <p><input type="text" name="username" placeholder="Username (masalan: ali)" required style="width: 90%; padding: 5px;"></p>
-        <p><input type="password" name="password" placeholder="Parol (masalan: 123)" required style="width: 90%; padding: 5px;"></p>
-        <button type="submit" style="width: 96%; padding: 7px;">Kirish</button>
-    </form>
-    <br>
-    <a href="{{ url_for('index') }}">← Orqaga qaytish</a>
-</div>
-</body>
-</html>
-Kod mantiqining muhim jihatlari:
-Teskari Xronologiya: MESSAGES.insert(0, new_entry) yangi xabarni doim birinchi o'ringa qo'shadi. recent_messages = MESSAGES[:20] qismi esa ro'yxatdan faqat eng birinchi turgan (eng yangi) 20 ta elementni kesib oladi.
+Markdown
+# Note Application
 
-Anti-Spam Blokirovka: /post yo'nalishida MESSAGES[0] (eng oxirgi qo'shilgan xabar) tekshiriladi. Agar uning muallifi va matni hozir yuborilayotgan xabar bilan bir xil bo'lsa, flash xabari qaytarilib, jarayon to'xtatiladi.
+Bu Flask va Flask-SQLAlchemy yordamida yaratilgan oddiy eslatmalar ilovasi. Loyihada SQLite ma'lumotlar bazasidan foydalanilgan.
 
-Sessiya Tozaligi va Xavfsizlik: session.clear() qilinganda foydalanuvchining identifikatori butunlay o'chadi. Agar u logoutdan keyin sahifani yangilab, eski formani qayta yuborishga (Re-submit) urinsa ham, server /post ichidagi if 'username' not in session: to'sig'idan uni o'tkazmaydi.****
+## Loyihani ishga tushirish qadamlari
+
+Loyihani kompyuteringizda ishga tushirish uchun quyidagi buyruqlarni ketma-ket bajaring:
+
+### 1. Virtual muhitni yaratish va faollashtirish
+Terminalda loyiha papkasiga kiring va quyidagilarni yozing:
+
+**Windows uchun:**
+```bash
+python -m venv venv
+venv\Scripts\activate
+Mac/Linux uchun:
+
+Bash
+python3 -m venv venv
+source venv/bin/activate
+2. Zaruriy kutubxonalarni o'rnatish
+Ilova ishlashi uchun Flask va Flask-SQLAlchemy kutubxonalarini o'rnatamiz:
+
+Bash
+pip install Flask Flask-SQLAlchemy
+3. Loyihani ishga tushirish
+Dasturni ishga tushirish uchun quyidagi buyruqni bering:
+
+Bash
+python app.py
+Ilova ishga tushganda avtomatik ravishda instance/app.db fayli (ma'lumotlar bazasi) yaratiladi va unga kamida 3 ta seed notlar qo'shiladi.
+
+4. Brauzerda tekshirish
+Brauzeringizni oching va quyidagi manzilga kiring:
+http://127.0.0.1:5000/
+
+Bosh sahifada eng oxirgi qo'shilgan eslatmalar eng yuqorida joylashgan tartibda ko'rinadi.
