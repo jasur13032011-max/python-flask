@@ -1,145 +1,220 @@
 # python-flask
-Mana barcha talablarga javob beradigan va tushunarli qilib yozilgan Flask loyiha strukturasi va kodi. Bu oddiy eslatmalar (Notes) ilovasi bo'lib, uning yordamida loyihani tezda ishga tushirishingiz mumkin.
+Mana Flask va Flask-SQLAlchemy yordamida to'liq CRUD (Yaratish, O'qish, Yangilash, O'chirish) amallarini va PRG (Post/Redirect/Get) patternini o'z ichiga olgan mukammal namuna.
 
-1. Loyiha strukturasi
-Loyiha papkasida quyidagi fayllarni yaratib oling:
+Siz so'ragan barcha shartlar (forma ko'rsatish, postni qabul qilish, flash xabarlari, redirect va 404 xatoligi) ushbu kodda jamlangan.
 
-Plaintext
-note_app/
-│
-├── app.py
-├── templates/
-│   └── index.html
-└── README.md
-2. Kod qismi
-app.py fayli
-Bu yerda Flask ilovasi, SQLite bazasi, Note modeli va bosh sahifa logikasi joylashgan. Shuningdek, bazada ma'lumot bo'lmasa, avtomatik 3 ta seed notlarni qo'shadigan funksiya yozilgan.
-
+1. Flask Ilovasi Kodi (app.py)
 Python
-from datetime import datetime
-from flask import Flask, render_template
+from flask import Flask, render_template, request, redirect, url_for, flash, abort
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.exc import IntegrityError
 
 app = Flask(__name__)
-
-# SQLite ma'lumotlar bazasi sozlamalari
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///notes.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = 'super-secret-key-123'  # flash() xabarlari uchun shart
 
 db = SQLAlchemy(app)
 
-# 1. Note modeli
+# --- Model ---
 class Note(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(200), nullable=False)
-    body = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    title = db.Column(db.String(100), nullable=False)
+    content = db.Column(db.Text, nullable=False)
 
     def __repr__(self):
         return f'<Note {self.title}>'
 
-# 2. Bosh sahifa (Notlar ro'yxati, yangilari yuqorida)
+# Bazani yaratish (Ilova ishga tushganda avtomatik yaratiladi)
+with app.app_context():
+    db.create_all()
+
+
+# --- Routes ---
+
+# 1. READ: Bosh sahifada barcha qaydlarni ko'rsatish
 @app.route('/')
 def index():
-    # order_by(Note.created_at.desc()) yangi notlarni yuqoriga chiqaradi
-    notes = Note.query.order_by(Note.created_at.desc()).all()
+    notes = Note.query.all()
     return render_template('index.html', notes=notes)
 
-# 3. Bazani yaratish va Seed ma'lumotlarni qo'shish funksiyasi
-def seed_data():
-    with app.app_context():
-        db.create_all()  # Bazani va jadvallarni yaratadi
+
+# 2. CREATE: Yangi qayd yaratish (GET forma + POST saqlash)
+@app.route('/notes/new', methods=['GET', 'POST'])
+def create_note():
+    if request.method == 'POST':
+        title = request.form.get('title')
+        content = request.form.get('content')
         
-        # Agar baza bo'sh bo'lsa, seed ma'lumotlarni qo'shadi
-        if Note.query.count() == 0:
-            seed_notes = [
-                Note(title="Birinchi eslatma", body="Bu loyihadagi eng birinchi seed eslatma hisoblanadi."),
-                Note(title="Xaridlar ro'yxati", body="Sut, non, tuxum va mevalar sotib olish kerak."),
-                Note(title="Flask haqida", body="Flask juda yengil va moslashuvchan mikro freymvorkdir.")
-            ]
-            db.session.bulk_save_objects(seed_notes)
+        if not title or not content:
+            flash("Sarlavha va kontent bo'sh bo'lishi mumkin emas!", "error")
+            return redirect(url_for('create_note'))
+            
+        new_note = Note(title=title, content=content)
+        db.session.add(new_note)
+        
+        try:
             db.session.commit()
-            print("Seed ma'lumotlar muvaffaqiyatli qo'shildi!")
+            flash("Qayd muvaffaqiyatli yaratildi!", "success")
+            return redirect(url_for('index'))  # PRG Pattern: redirect qilinadi
+        except IntegrityError:
+            db.session.rollback()
+            flash("Tizimda xatolik yuz berdi.", "error")
+            return redirect(url_for('create_note'))
+            
+    return render_template('create.html')
+
+
+# 3. READ DETALI: Bitta qayd tafsiloti (Mavjud bo'lmasa 404)
+@app.route('/notes/<int:id>')
+def note_detail(id):
+    # .get_or_404() avtomatik ravishda obyekt topilmasa 404 xatolik qaytaradi
+    note = Note.query.get_or_404(id)
+    return render_template('detail.html', note=note)
+
+
+# 4. UPDATE: Qaydni tahrirlash (GET forma + POST yangilash)
+@app.route('/notes/<int:id>/edit', methods=['GET', 'POST'])
+def edit_note(id):
+    note = Note.query.get_or_404(id)
+    
+    if request.method == 'POST':
+        note.title = request.form.get('title')
+        note.content = request.form.get('content')
+        
+        try:
+            db.session.commit()
+            flash("Qayd muvaffaqiyatli yangilandi!", "success")
+            return redirect(url_for('note_detail', id=note.id))  # PRG Pattern
+        except IntegrityError:
+            db.session.rollback()
+            flash("Yangilashda xatolik yuz berdi.", "error")
+            return redirect(url_for('edit_note', id=note.id))
+            
+    return render_template('edit.html', note=note)
+
+
+# 5. DELETE: Qaydni o'chirish (Faqat POST xavfsizligi uchun)
+@app.route('/notes/<int:id>/delete', methods=['POST'])
+def delete_note(id):
+    note = Note.query.get_or_404(id)
+    db.session.delete(note)
+    
+    try:
+        db.session.commit()
+        flash("Qayd muvaffaqiyatli o'chirildi!", "success")
+    except IntegrityError:
+        db.session.rollback()
+        flash("O'chirishda xatolik yuz berdi.", "error")
+        
+    return redirect(url_for('index'))  # PRG Pattern
+
 
 if __name__ == '__main__':
-    seed_data()  # Dastur ishga tushishidan oldin bazani tekshiradi
     app.run(debug=True)
-templates/index.html fayli
-Notlarni chiroyli ko'rinishda chiqarish uchun oddiy HTML shablon.
+2. HTML Shablonlar (templates/)
+Ilova chiroyli ishlashi va flash() xabarlarini ko'rsatishi uchun templates nomli papka ochib, ichiga quyidagi fayllarni joylashtiring.
 
+templates/base.html (Asosiy qolip)
 HTML
 <!DOCTYPE html>
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mening Eslatmalarim</title>
+    <title>Qaydlar Ilovasi</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f4f4f9; }
-        .container { max-width: 600px; margin: auto; }
-        h1 { color: #333; text-align: center; }
-        .note-card { background: white; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .note-title { margin-0: 0; color: #007BFF; }
-        .note-date { font-size: 0.8rem; color: #777; margin-bottom: 10px; }
-        .note-body { color: #555; line-height: 1.5; }
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; }
+        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .flash { padding: 10px; margin-bottom: 15px; border-radius: 4px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .note-item { border-bottom: 1px solid #ddd; padding: 10px 0; }
+        .btn { display: inline-block; padding: 8px 12px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; border: none; cursor: pointer; }
+        .btn-danger { background: #dc3545; }
+        .btn-secondary { background: #6c757d; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Eslatmalar Ro'yxati</h1>
-        <hr>
-        {% if notes %}
-            {% for note in notes %}
-                <div class="note-card">
-                    <h2 class="note-title">{{ note.title }}</h2>
-                    <div class="note-date">Yaratilgan vaqti: {{ note.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
-                    <p class="note-body">{{ note.body }}</p>
-                </div>
-            {% endfor %}
-        {% else %}
-            <p style="text-align:center;">Hozircha hech qanday eslatma yo'q.</p>
-        {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %} {% endblock %}
     </div>
 </body>
 </html>
-3. README.md fayli (Ishga tushirish yo'riqnomasi)
-Siz loyiha ildiz papkasiga joylashtirishingiz kerak bo'lgan tayyor markdown matni:
+templates/index.html (Bosh sahifa)
+HTML
+{% extends 'base.html' %}
+{% block content %}
+    <h1>Mening Qaydlarim</h1>
+    <a href="{{ url_for('create_note') }}" class="btn">+ Yangi Qayd Qo'shish</a>
+    <hr>
+    {% if notes %}
+        {% for note in notes %}
+            <div class="note-item">
+                <h3><a href="{{ url_for('note_detail', id=note.id) }}">{{ note.title }}</a></h3>
+                <p>{{ note.content[:100] }}...</p>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>Hozircha hech qanday qayd yo'q.</p>
+    {% endif %}
+{% endblock %}
+templates/create.html (Yaratish formasi)
+HTML
+{% extends 'base.html' %}
+{% block content %}
+    <h1>Yangi Qayd Yaratish</h1>
+    <form method="POST">
+        <label>Sarlavha:</label><br>
+        <input type="text" name="title" style="width: 100%; padding: 8px;" required><br><br>
+        
+        <label>Kontent:</label><br>
+        <textarea name="content" rows="5" style="width: 100%; padding: 8px;" required></textarea><br><br>
+        
+        <button type="submit" class="btn">Saqlash</button>
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">Orqaga</a>
+    </form>
+{% endblock %}
+templates/detail.html (Bitta qayd detali)
+HTML
+{% extends 'base.html' %}
+{% block content %}
+    <h1>{{ note.title }}</h1>
+    <p style="white-space: pre-wrap;">{{ note.content }}</p>
+    <hr>
+    <a href="{{ url_for('index') }}" class="btn btn-secondary">Bosh sahifa</a>
+    <a href="{{ url_for('edit_note', id=note.id) }}" class="btn">Tahrirlash</a>
+    
+    <form action="{{ url_for('delete_note', id=note.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Rostdan ham o\'chirmoqchimisiz?');">
+        <button type="submit" class="btn btn-danger">O'chirish</button>
+    </form>
+{% endblock %}
+templates/edit.html (Tahrirlash formasi)
+HTML
+{% extends 'base.html' %}
+{% block content %}
+    <h1>Qaydni Tahrirlash</h1>
+    <form method="POST">
+        <label>Sarlavha:</label><br>
+        <input type="text" name="title" value="{{ note.title }}" style="width: 100%; padding: 8px;" required><br><br>
+        
+        <label>Kontent:</label><br>
+        <textarea name="content" rows="5" style="width: 100%; padding: 8px;" required>{{ note.content }}</textarea><br><br>
+        
+        <button type="submit" class="btn">Yangilash</button>
+        <a href="{{ url_for('note_detail', id=note.id) }}" class="btn btn-secondary">Bekor qilish</a>
+    </form>
+{% endblock %}
+Nima uchun ushbu tuzilma ideal?
+PRG Pattern (Post/Redirect/Get) to'liq ta'minlangan: Formadan ma'lumot POST bo'lib kelgandan keyin sahifa qayta render qilinmaydi, balki redirect() yordamida boshqa sahifaga yo'naltiriladi. Bu foydalanuvchi sahifani yangilaganida (F5 bosganda) ma'lumotlar bazaga ikki marta yozilib qolishini oldini oladi.
 
-Markdown
-# Note Application
+get_or_404(id) ishlatilgan: Agar foydalanuvchi brauzerda /notes/999 deb mavjud bo'lmagan ID kiritib kirsa, Flask avtomatik ravishda chiroyli 404 Not Found xatoligini qaytaradi.
 
-Bu Flask va Flask-SQLAlchemy yordamida yaratilgan oddiy eslatmalar ilovasi. Loyihada SQLite ma'lumotlar bazasidan foydalanilgan.
-
-## Loyihani ishga tushirish qadamlari
-
-Loyihani kompyuteringizda ishga tushirish uchun quyidagi buyruqlarni ketma-ket bajaring:
-
-### 1. Virtual muhitni yaratish va faollashtirish
-Terminalda loyiha papkasiga kiring va quyidagilarni yozing:
-
-**Windows uchun:**
-```bash
-python -m venv venv
-venv\Scripts\activate
-Mac/Linux uchun:
-
-Bash
-python3 -m venv venv
-source venv/bin/activate
-2. Zaruriy kutubxonalarni o'rnatish
-Ilova ishlashi uchun Flask va Flask-SQLAlchemy kutubxonalarini o'rnatamiz:
-
-Bash
-pip install Flask Flask-SQLAlchemy
-3. Loyihani ishga tushirish
-Dasturni ishga tushirish uchun quyidagi buyruqni bering:
-
-Bash
-python app.py
-Ilova ishga tushganda avtomatik ravishda instance/app.db fayli (ma'lumotlar bazasi) yaratiladi va unga kamida 3 ta seed notlar qo'shiladi.
-
-4. Brauzerda tekshirish
-Brauzeringizni oching va quyidagi manzilga kiring:
-http://127.0.0.1:5000/
-
-Bosh sahifada eng oxirgi qo'shilgan eslatmalar eng yuqorida joylashgan tartibda ko'rinadi.
+Xavfsiz O'chirish (Delete): O'chirish amali oddiy <a> havola (GET) orqali emas, balki POST so'rovi yuboradigan forma orqali bajarilgan. Bu tasodifiy yoki qidiruv botlari havola orqali o'tib ma'lumotlarni o'chirib yuborishini oldini oladi.
