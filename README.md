@@ -1,145 +1,208 @@
-# python-flask
-Mana Flask va Flask-SQLAlchemy yordamida to'liq CRUD (Yaratish, O'qish, Yangilash, O'chirish) amallarini va PRG (Post/Redirect/Get) patternini o'z ichiga olgan mukammal namuna.
-
-Siz so'ragan barcha shartlar (forma ko'rsatish, postni qabul qilish, flash xabarlari, redirect va 404 xatoligi) ushbu kodda jamlangan.
+# python-flaskMana so'ralgan barcha shartlarni (User va Note munosabati, One-to-Many bog'lanish, xavfsizlik tekshiruvlari (abort(403)), sessiyalar va PRG pattern) o'z ichiga olgan to'liq Flask ilovasi.
 
 1. Flask Ilovasi Kodi (app.py)
 Python
-from flask import Flask, render_template, request, redirect, url_for, flash, abort
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import IntegrityError
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///notes.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///notes_app.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = 'super-secret-key-123'  # flash() xabarlari uchun shart
+app.config['SECRET_KEY'] = 'dev-secret-key-98765'
 
 db = SQLAlchemy(app)
 
-# --- Model ---
+# --- MODELLAR ---
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    
+    # cascade="all, delete-orphan" -> User o'chganda unga tegishli barcha Note'lar ham o'chib ketadi
+    notes = db.relationship('Note', backref='author', lazy=True, cascade="all, delete-orphan")
+
 class Note(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), nullable=False)
-    content = db.Column(db.Text, nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Tashqi kalit (ForeignKey)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-    def __repr__(self):
-        return f'<Note {self.title}>'
 
-# Bazani yaratish (Ilova ishga tushganda avtomatik yaratiladi)
+# Ma'lumotlar bazasini yaratish
 with app.app_context():
     db.create_all()
 
 
-# --- Routes ---
-
-# 1. READ: Bosh sahifada barcha qaydlarni ko'rsatish
-@app.route('/')
-def index():
-    notes = Note.query.all()
-    return render_template('index.html', notes=notes)
+# --- DEKORATOR (Avtorizatsiyani tekshirish uchun) ---
+def get_current_user_id():
+    return session.get('user_id')
 
 
-# 2. CREATE: Yangi qayd yaratish (GET forma + POST saqlash)
+# --- ROUTES ---
+
+# 1. BOSH SAHIFA / LOGIN
+@app.route('/', methods=['GET', 'POST'])
+def login():
+    if get_current_user_id():
+        return redirect(url_for('list_notes'))
+        
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        
+        if not username:
+            flash("Username bo'sh bo'lishi mumkin emas!", "error")
+            return redirect(url_for('login'))
+            
+        # Foydalanuvchini bazadan qidiramiz
+        user = User.query.filter_by(username=username).first()
+        
+        # Agar mavjud bo'lmasa, yangi yaratamiz
+        if not user:
+            user = User(username=username)
+            db.session.add(user)
+            try:
+                db.session.commit()
+                flash(f"Yangi profil yaratildi: @{username}", "success")
+            except IntegrityError:
+                db.session.rollback()
+                flash("Xatolik yuz berdi, qaytadan urunib ko'ring.", "error")
+                return redirect(url_for('login'))
+        else:
+            flash(f"Xush kelibsiz, @{username}!", "success")
+            
+        # Sessiyaga ID ni yozib qo'yamiz
+        session['user_id'] = user.id
+        return redirect(url_for('list_notes')) # PRG
+        
+    return render_template('login.html')
+
+
+# 2. LOGOUT
+@app.route('/logout')
+def logout():
+    session.clear()
+    flash("Tizimdan muvaffaqiyatli chiqdingiz.", "success")
+    return redirect(url_for('login'))
+
+
+# 3. READ: Faqat joriy foydalanuvchining qaydlari
+@app.route('/notes')
+def list_notes():
+    user_id = get_current_user_id()
+    if not user_id:
+        flash("Avval tizimga kiring!", "error")
+        return redirect(url_for('login'))
+        
+    user = User.query.get(user_id)
+    # Faqat shu user_id ga tegishli qaydlarni filter qilamiz
+    user_notes = Note.query.filter_by(user_id=user_id).order_by(Note.created_at.desc()).all()
+    
+    return render_template('notes.html', user=user, notes=user_notes)
+
+
+# 4. CREATE: Yangi qayd qo'shish
 @app.route('/notes/new', methods=['GET', 'POST'])
 def create_note():
+    user_id = get_current_user_id()
+    if not user_id:
+        abort(401) # Unauthorized
+        
     if request.method == 'POST':
         title = request.form.get('title')
-        content = request.form.get('content')
+        body = request.form.get('body')
         
-        if not title or not content:
-            flash("Sarlavha va kontent bo'sh bo'lishi mumkin emas!", "error")
+        if not title or not body:
+            flash("Sarlavha va matn to'ldirilishi shart!", "error")
             return redirect(url_for('create_note'))
             
-        new_note = Note(title=title, content=content)
+        new_note = Note(title=title, body=body, user_id=user_id)
         db.session.add(new_note)
+        db.session.commit()
         
-        try:
-            db.session.commit()
-            flash("Qayd muvaffaqiyatli yaratildi!", "success")
-            return redirect(url_for('index'))  # PRG Pattern: redirect qilinadi
-        except IntegrityError:
-            db.session.rollback()
-            flash("Tizimda xatolik yuz berdi.", "error")
-            return redirect(url_for('create_note'))
-            
-    return render_template('create.html')
+        flash("Qayd muvaffaqiyatli saqlandi!", "success")
+        return redirect(url_for('list_notes')) # PRG
+        
+    return render_template('create_note.html')
 
 
-# 3. READ DETALI: Bitta qayd tafsiloti (Mavjud bo'lmasa 404)
-@app.route('/notes/<int:id>')
-def note_detail(id):
-    # .get_or_404() avtomatik ravishda obyekt topilmasa 404 xatolik qaytaradi
-    note = Note.query.get_or_404(id)
-    return render_template('detail.html', note=note)
-
-
-# 4. UPDATE: Qaydni tahrirlash (GET forma + POST yangilash)
+# 5. UPDATE: Qaydni tahrirlash (Xavfsizlik tekshiruvi bilan)
 @app.route('/notes/<int:id>/edit', methods=['GET', 'POST'])
 def edit_note(id):
+    user_id = get_current_user_id()
+    if not user_id:
+        abort(401)
+        
     note = Note.query.get_or_404(id)
     
+    # MUHIM XAVFSIZLIK TEKSHIRUVI: Qayd qonuniy egasiga tegishlimi?
+    if note.user_id != user_id:
+        abort(403) # Forbidden (Taqiqlangan)
+        
     if request.method == 'POST':
         note.title = request.form.get('title')
-        note.content = request.form.get('content')
+        note.body = request.form.get('body')
         
-        try:
-            db.session.commit()
-            flash("Qayd muvaffaqiyatli yangilandi!", "success")
-            return redirect(url_for('note_detail', id=note.id))  # PRG Pattern
-        except IntegrityError:
-            db.session.rollback()
-            flash("Yangilashda xatolik yuz berdi.", "error")
-            return redirect(url_for('edit_note', id=note.id))
-            
-    return render_template('edit.html', note=note)
+        db.session.commit()
+        flash("Qayd muvaffaqiyatli yangilandi!", "success")
+        return redirect(url_for('list_notes')) # PRG
+        
+    return render_template('edit_note.html', note=note)
 
 
-# 5. DELETE: Qaydni o'chirish (Faqat POST xavfsizligi uchun)
+# 6. DELETE: Qaydni o'chirish (Xavfsizlik tekshiruvi bilan)
 @app.route('/notes/<int:id>/delete', methods=['POST'])
 def delete_note(id):
-    note = Note.query.get_or_404(id)
-    db.session.delete(note)
-    
-    try:
-        db.session.commit()
-        flash("Qayd muvaffaqiyatli o'chirildi!", "success")
-    except IntegrityError:
-        db.session.rollback()
-        flash("O'chirishda xatolik yuz berdi.", "error")
+    user_id = get_current_user_id()
+    if not user_id:
+        abort(401)
         
-    return redirect(url_for('index'))  # PRG Pattern
+    note = Note.query.get_or_404(id)
+    
+    # MUHIM XAVFSIZLIK TEKSHIRUVI: Qayd qonuniy egasiga tegishlimi?
+    if note.user_id != user_id:
+        abort(403)
+        
+    db.session.delete(note)
+    db.session.commit()
+    
+    flash("Qayd o'chirib tashlandi!", "success")
+    return redirect(url_for('list_notes')) # PRG
 
 
 if __name__ == '__main__':
     app.run(debug=True)
 2. HTML Shablonlar (templates/)
-Ilova chiroyli ishlashi va flash() xabarlarini ko'rsatishi uchun templates nomli papka ochib, ichiga quyidagi fayllarni joylashtiring.
-
-templates/base.html (Asosiy qolip)
+templates/base.html
 HTML
 <!DOCTYPE html>
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <title>Qaydlar Ilovasi</title>
+    <title>Sessiyalar va Qaydlar</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; }
-        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        .flash { padding: 10px; margin-bottom: 15px; border-radius: 4px; }
-        .success { background-color: #d4edda; color: #155724; }
-        .error { background-color: #f8d7da; color: #721c24; }
-        .note-item { border-bottom: 1px solid #ddd; padding: 10px 0; }
-        .btn { display: inline-block; padding: 8px 12px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; border: none; cursor: pointer; }
-        .btn-danger { background: #dc3545; }
-        .btn-secondary { background: #6c757d; }
+        body { font-family: sans-serif; margin: 30px; background: #eee; }
+        .box { background: white; padding: 20px; border-radius: 6px; max-width: 600px; margin: auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .flash { padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .note { border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .btn { padding: 6px 12px; text-decoration: none; border-radius: 4px; display: inline-block; cursor: pointer; border: none;}
+        .btn-primary { background: #007bff; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-link { background: none; color: #007bff; padding: 0; }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="box">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
-                {% for category, message in messages %}
-                    <div class="flash {{ category }}">{{ message }}</div>
+                {% for category, msg in messages %}
+                    <div class="flash {{ category }}">{{ msg }}</div>
                 {% endfor %}
             {% endif %}
         {% endwith %}
@@ -148,73 +211,70 @@ HTML
     </div>
 </body>
 </html>
-templates/index.html (Bosh sahifa)
+templates/login.html
 HTML
 {% extends 'base.html' %}
 {% block content %}
-    <h1>Mening Qaydlarim</h1>
-    <a href="{{ url_for('create_note') }}" class="btn">+ Yangi Qayd Qo'shish</a>
+    <h2>Tizimga kirish / Ro'yxatdan o'tish</h2>
+    <form method="POST">
+        <label>Username kiriting:</label><br><br>
+        <input type="text" name="username" placeholder="Masalan: alisher" style="width: 95%; padding: 8px;" required><br><br>
+        <button type="submit" class="btn btn-primary">Kirish</button>
+    </form>
+{% endblock %}
+templates/notes.html
+HTML
+{% extends 'base.html' %}
+{% block content %}
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3>@{{ user.username }} sahifasi</h3>
+        <a href="{{ url_for('logout') }}" style="color: red;">Chiqish</a>
+    </div>
     <hr>
+    <a href="{{ url_for('create_note') }}" class="btn btn-primary">+ Yangi qayd yozish</a>
+    
+    <h4>Sizning qaydlaringiz:</h4>
     {% if notes %}
         {% for note in notes %}
-            <div class="note-item">
-                <h3><a href="{{ url_for('note_detail', id=note.id) }}">{{ note.title }}</a></h3>
-                <p>{{ note.content[:100] }}...</p>
+            <div class="note">
+                <h5>{{ note.title }} <small style="color: gray;">({{ note.created_at.strftime('%Y-%m-%d %H:%M') }})</small></h5>
+                <p>{{ note.body }}</p>
+                <a href="{{ url_for('edit_note', id=note.id) }}" class="btn-link">Tahrirlash</a> | 
+                
+                <form action="{{ url_for('delete_note', id=note.id) }}" method="POST" style="display:inline;" onsubmit="return confirm('O\'chirilsinmi?');">
+                    <button type="submit" class="btn-link" style="color: red;">O'chirish</button>
+                </form>
             </div>
         {% endfor %}
     {% else %}
-        <p>Hozircha hech qanday qayd yo'q.</p>
+        <p>Hozircha qaydlar yo'q.</p>
     {% endif %}
 {% endblock %}
-templates/create.html (Yaratish formasi)
+templates/create_note.html
 HTML
 {% extends 'base.html' %}
 {% block content %}
-    <h1>Yangi Qayd Yaratish</h1>
+    <h3>Yangi qayd qo'shish</h3>
     <form method="POST">
-        <label>Sarlavha:</label><br>
-        <input type="text" name="title" style="width: 100%; padding: 8px;" required><br><br>
-        
-        <label>Kontent:</label><br>
-        <textarea name="content" rows="5" style="width: 100%; padding: 8px;" required></textarea><br><br>
-        
-        <button type="submit" class="btn">Saqlash</button>
-        <a href="{{ url_for('index') }}" class="btn btn-secondary">Orqaga</a>
+        <input type="text" name="title" placeholder="Sarlavha" style="width: 95%; padding: 8px;" required><br><br>
+        <textarea name="body" placeholder="Matn..." rows="5" style="width: 95%; padding: 8px;" required></textarea><br><br>
+        <button type="submit" class="btn btn-primary">Saqlash</button>
+        <a href="{{ url_for('list_notes') }}">Orqaga</a>
     </form>
 {% endblock %}
-templates/detail.html (Bitta qayd detali)
+templates/edit_note.html
 HTML
 {% extends 'base.html' %}
 {% block content %}
-    <h1>{{ note.title }}</h1>
-    <p style="white-space: pre-wrap;">{{ note.content }}</p>
-    <hr>
-    <a href="{{ url_for('index') }}" class="btn btn-secondary">Bosh sahifa</a>
-    <a href="{{ url_for('edit_note', id=note.id) }}" class="btn">Tahrirlash</a>
-    
-    <form action="{{ url_for('delete_note', id=note.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Rostdan ham o\'chirmoqchimisiz?');">
-        <button type="submit" class="btn btn-danger">O'chirish</button>
-    </form>
-{% endblock %}
-templates/edit.html (Tahrirlash formasi)
-HTML
-{% extends 'base.html' %}
-{% block content %}
-    <h1>Qaydni Tahrirlash</h1>
+    <h3>Qaydni tahrirlash</h3>
     <form method="POST">
-        <label>Sarlavha:</label><br>
-        <input type="text" name="title" value="{{ note.title }}" style="width: 100%; padding: 8px;" required><br><br>
-        
-        <label>Kontent:</label><br>
-        <textarea name="content" rows="5" style="width: 100%; padding: 8px;" required>{{ note.content }}</textarea><br><br>
-        
-        <button type="submit" class="btn">Yangilash</button>
-        <a href="{{ url_for('note_detail', id=note.id) }}" class="btn btn-secondary">Bekor qilish</a>
+        <input type="text" name="title" value="{{ note.title }}" style="width: 95%; padding: 8px;" required><br><br>
+        <textarea name="body" rows="5" style="width: 95%; padding: 8px;" required>{{ note.body }}</textarea><br><br>
+        <button type="submit" class="btn btn-primary">Yangilash</button>
+        <a href="{{ url_for('list_notes') }}">Bekor qilish</a>
     </form>
 {% endblock %}
-Nima uchun ushbu tuzilma ideal?
-PRG Pattern (Post/Redirect/Get) to'liq ta'minlangan: Formadan ma'lumot POST bo'lib kelgandan keyin sahifa qayta render qilinmaydi, balki redirect() yordamida boshqa sahifaga yo'naltiriladi. Bu foydalanuvchi sahifani yangilaganida (F5 bosganda) ma'lumotlar bazaga ikki marta yozilib qolishini oldini oladi.
+Diqqat qilinishi kerak bo'lgan asosiy nuqtalar:
+cascade="all, delete-orphan": Bu munosabat (relationship) o'rnatilganda juda muhim. Agar tizimdan biror User o'chirib tashlansa, unga tegishli bo'lgan barcha Notelar bazada yetim (orphan) bo'lib qolmasdan, avtomatik ravishda tozalab tashlanadi.
 
-get_or_404(id) ishlatilgan: Agar foydalanuvchi brauzerda /notes/999 deb mavjud bo'lmagan ID kiritib kirsa, Flask avtomatik ravishda chiroyli 404 Not Found xatoligini qaytaradi.
-
-Xavfsiz O'chirish (Delete): O'chirish amali oddiy <a> havola (GET) orqali emas, balki POST so'rovi yuboradigan forma orqali bajarilgan. Bu tasodifiy yoki qidiruv botlari havola orqali o'tib ma'lumotlarni o'chirib yuborishini oldini oladi.
+Xavfsizlik Devori (abort(403)): Agar biron bir ayyor foydalanuvchi tizimga kirib, brauzer manzillar panelida qo'lda boshqa birovning qayd ID sini tahrirlashga urinsa (masalan: /notes/5/edit), kod darhol note.user_id != session['user_id'] shartini tekshiradi va unga 403 Forbidden xatoligini qaytarib, o'zgartirishga yo'l qo'ymaydi.
