@@ -1,280 +1,132 @@
-# python-flaskMana so'ralgan barcha shartlarni (User va Note munosabati, One-to-Many bog'lanish, xavfsizlik tekshiruvlari (abort(403)), sessiyalar va PRG pattern) o'z ichiga olgan to'liq Flask ilovasi.
+# python-flask
+Ilovani Blueprint'lar va create_app() factory pattern asosida modulli strukturaga o'tkazish loyihani kengaytiriladigan va tartibli qiladi.
 
-1. Flask Ilovasi Kodi (app.py)
+Quyida loyihaning to'liq strukturasi va barcha kerakli fayllar kodi keltirilgan.
+
+📁 Loyiha strukturasi
+Plaintext
+loyiha/
+│
+├── app.py                     # Faqat factory funksiyani chaqiradi
+├── myapp/                     # Asosiy paket (package)
+│   ├── __init__.py            # create_app() shu yerda bo'ladi
+│   │
+│   ├── blueprints/
+│   │   ├── main.py            # Bosh sahifa va About (main_bp)
+│   │   └── notes.py           # CRUD operatsiyalari (notes_bp)
+│   │
+│   └── templates/             # HTML shablonlar
+│       ├── base.html
+│       ├── main/
+│       │   ├── index.html
+│       │   └── about.html
+│       └── notes/
+│           ├── list.html
+│           ├── create.html
+│           └── edit.html
+💻 Kodlar to'plami
+1. myapp/__init__.py (Factory Pattern)
+Bu faylda ilovani yaratuvchi va blueprintlarni ro'yxatdan o'tkazuvchi create_app() funksiyasi joylashadi.
+
 Python
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, session, abort
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.exc import IntegrityError
+from flask import Flask
 
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///notes_app.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = 'dev-secret-key-98765'
+def create_app():
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = 'maxfiy-kalit-shu yerda'
 
-db = SQLAlchemy(app)
+    # Blueprintlarni import qilish
+    from myapp.blueprints.main import main_bp
+    from myapp.blueprints.notes import notes_bp
 
-# --- MODELLAR ---
+    # Blueprintlarni ro'yxatdan o'tkazish
+    app.register_blueprint(main_bp)  # Bosh sahifa uchun url_prefix shart emas
+    app.register_blueprint(notes_bp, url_prefix='/notes') # CRUD uchun prefiks
 
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False)
-    
-    # cascade="all, delete-orphan" -> User o'chganda unga tegishli barcha Note'lar ham o'chib ketadi
-    notes = db.relationship('Note', backref='author', lazy=True, cascade="all, delete-orphan")
+    return app
+2. myapp/blueprints/main.py (Main Blueprint)
+Bosh sahifa va "Biz haqimizda" sahifasi uchun mas'ul kod.
 
-class Note(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(100), nullable=False)
-    body = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Tashqi kalit (ForeignKey)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+Python
+from flask import Blueprint, render_template
 
+main_bp = Blueprint('main', __name__)
 
-# Ma'lumotlar bazasini yaratish
-with app.app_context():
-    db.create_all()
+@main_bp.route('/')
+def index():
+    return render_template('main/index.html')
 
+@main_bp.route('/about')
+def about():
+    return render_template('main/about.html')
+3. myapp/blueprints/notes.py (Notes CRUD Blueprint)
+Eslatmalar bilan ishlash (CRUD) qismi. Bu yerda url_for ishlatganda notes.index, notes.create kabi murojaat qilinadi.
 
-# --- DEKORATOR (Avtorizatsiyani tekshirish uchun) ---
-def get_current_user_id():
-    return session.get('user_id')
+Python
+from flask import Blueprint, render_template, redirect, url_for, request, flash
 
+notes_bp = Blueprint('notes', __name__)
 
-# --- ROUTES ---
+# Namunaviy ma'lumotlar bazasi (vaqtincha ro'yxat)
+notes_db = [
+    {"id": 1, "title": "Birinchi eslatma", "content": "Flask o'rganish juda qiziq!"}
+]
 
-# 1. BOSH SAHIFA / LOGIN
-@app.route('/', methods=['GET', 'POST'])
-def login():
-    if get_current_user_id():
-        return redirect(url_for('list_notes'))
-        
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        
-        if not username:
-            flash("Username bo'sh bo'lishi mumkin emas!", "error")
-            return redirect(url_for('login'))
-            
-        # Foydalanuvchini bazadan qidiramiz
-        user = User.query.filter_by(username=username).first()
-        
-        # Agar mavjud bo'lmasa, yangi yaratamiz
-        if not user:
-            user = User(username=username)
-            db.session.add(user)
-            try:
-                db.session.commit()
-                flash(f"Yangi profil yaratildi: @{username}", "success")
-            except IntegrityError:
-                db.session.rollback()
-                flash("Xatolik yuz berdi, qaytadan urunib ko'ring.", "error")
-                return redirect(url_for('login'))
-        else:
-            flash(f"Xush kelibsiz, @{username}!", "success")
-            
-        # Sessiyaga ID ni yozib qo'yamiz
-        session['user_id'] = user.id
-        return redirect(url_for('list_notes')) # PRG
-        
-    return render_template('login.html')
+@notes_bp.route('/')
+def index():
+    return render_template('notes/list.html', notes=notes_db)
 
-
-# 2. LOGOUT
-@app.route('/logout')
-def logout():
-    session.clear()
-    flash("Tizimdan muvaffaqiyatli chiqdingiz.", "success")
-    return redirect(url_for('login'))
-
-
-# 3. READ: Faqat joriy foydalanuvchining qaydlari
-@app.route('/notes')
-def list_notes():
-    user_id = get_current_user_id()
-    if not user_id:
-        flash("Avval tizimga kiring!", "error")
-        return redirect(url_for('login'))
-        
-    user = User.query.get(user_id)
-    # Faqat shu user_id ga tegishli qaydlarni filter qilamiz
-    user_notes = Note.query.filter_by(user_id=user_id).order_by(Note.created_at.desc()).all()
-    
-    return render_template('notes.html', user=user, notes=user_notes)
-
-
-# 4. CREATE: Yangi qayd qo'shish
-@app.route('/notes/new', methods=['GET', 'POST'])
-def create_note():
-    user_id = get_current_user_id()
-    if not user_id:
-        abort(401) # Unauthorized
-        
+@notes_bp.route('/create', methods=['GET', 'POST'])
+def create():
     if request.method == 'POST':
         title = request.form.get('title')
-        body = request.form.get('body')
+        content = request.form.get('content')
+        new_id = max([n['id'] for n in notes_db], default=0) + 1
         
-        if not title or not body:
-            flash("Sarlavha va matn to'ldirilishi shart!", "error")
-            return redirect(url_for('create_note'))
-            
-        new_note = Note(title=title, body=body, user_id=user_id)
-        db.session.add(new_note)
-        db.session.commit()
+        notes_db.append({"id": new_id, "title": title, "content": content})
+        flash("Eslatma muvaffaqiyatli yaratildi!", "success")
+        return redirect(url_for('notes.index')) # E'tibor bering: notes.index
         
-        flash("Qayd muvaffaqiyatli saqlandi!", "success")
-        return redirect(url_for('list_notes')) # PRG
-        
-    return render_template('create_note.html')
+    return render_template('notes/create.html')
 
+@notes_bp.route('/<int:note_id>/edit', methods=['GET', 'POST'])
+def edit(note_id):
+    note = next((n for n in notes_db if n['id'] == note_id), None)
+    if not note:
+        flash("Eslatma topilmadi!", "danger")
+        return redirect(url_for('notes.index'))
 
-# 5. UPDATE: Qaydni tahrirlash (Xavfsizlik tekshiruvi bilan)
-@app.route('/notes/<int:id>/edit', methods=['GET', 'POST'])
-def edit_note(id):
-    user_id = get_current_user_id()
-    if not user_id:
-        abort(401)
-        
-    note = Note.query.get_or_404(id)
-    
-    # MUHIM XAVFSIZLIK TEKSHIRUVI: Qayd qonuniy egasiga tegishlimi?
-    if note.user_id != user_id:
-        abort(403) # Forbidden (Taqiqlangan)
-        
     if request.method == 'POST':
-        note.title = request.form.get('title')
-        note.body = request.form.get('body')
-        
-        db.session.commit()
-        flash("Qayd muvaffaqiyatli yangilandi!", "success")
-        return redirect(url_for('list_notes')) # PRG
-        
-    return render_template('edit_note.html', note=note)
+        note['title'] = request.form.get('title')
+        note['content'] = request.form.get('content')
+        flash("Eslatma yangilandi!", "success")
+        return redirect(url_for('notes.index'))
 
+    return render_template('notes/edit.html', note=note)
 
-# 6. DELETE: Qaydni o'chirish (Xavfsizlik tekshiruvi bilan)
-@app.route('/notes/<int:id>/delete', methods=['POST'])
-def delete_note(id):
-    user_id = get_current_user_id()
-    if not user_id:
-        abort(401)
-        
-    note = Note.query.get_or_404(id)
-    
-    # MUHIM XAVFSIZLIK TEKSHIRUVI: Qayd qonuniy egasiga tegishlimi?
-    if note.user_id != user_id:
-        abort(403)
-        
-    db.session.delete(note)
-    db.session.commit()
-    
-    flash("Qayd o'chirib tashlandi!", "success")
-    return redirect(url_for('list_notes')) # PRG
+@notes_bp.route('/<int:note_id>/delete', methods=['POST'])
+def delete(note_id):
+    global notes_db
+    notes_db = [n for n in notes_db if n['id'] != note_id]
+    flash("Eslatma o'chirildi!", "warning")
+    return redirect(url_for('notes.index'))
+4. app.py (Kirish nuqtasi)
+Asosiy faylingiz maksimal darajada sodda va qisqa bo'ladi. U faqat factory funksiyani chaqiradi xolos.
 
+Python
+from myapp import create_app
+
+app = create_app()
 
 if __name__ == '__main__':
     app.run(debug=True)
-2. HTML Shablonlar (templates/)
-templates/base.html
-HTML
-<!DOCTYPE html>
-<html lang="uz">
-<head>
-    <meta charset="UTF-8">
-    <title>Sessiyalar va Qaydlar</title>
-    <style>
-        body { font-family: sans-serif; margin: 30px; background: #eee; }
-        .box { background: white; padding: 20px; border-radius: 6px; max-width: 600px; margin: auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .flash { padding: 10px; margin-bottom: 10px; border-radius: 4px; }
-        .success { background: #d4edda; color: #155724; }
-        .error { background: #f8d7da; color: #721c24; }
-        .note { border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 4px; }
-        .btn { padding: 6px 12px; text-decoration: none; border-radius: 4px; display: inline-block; cursor: pointer; border: none;}
-        .btn-primary { background: #007bff; color: white; }
-        .btn-danger { background: #dc3545; color: white; }
-        .btn-link { background: none; color: #007bff; padding: 0; }
-    </style>
-</head>
-<body>
-    <div class="box">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, msg in messages %}
-                    <div class="flash {{ category }}">{{ msg }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+🔗 Shablonlarda url_for ishlatish qoidasi
+Endi HTML fayllar ichida havolalar berganda blueprint nomini qo'shib yozasiz:
 
-        {% block content %} {% endblock %}
-    </div>
-</body>
-</html>
-templates/login.html
-HTML
-{% extends 'base.html' %}
-{% block content %}
-    <h2>Tizimga kirish / Ro'yxatdan o'tish</h2>
-    <form method="POST">
-        <label>Username kiriting:</label><br><br>
-        <input type="text" name="username" placeholder="Masalan: alisher" style="width: 95%; padding: 8px;" required><br><br>
-        <button type="submit" class="btn btn-primary">Kirish</button>
-    </form>
-{% endblock %}
-templates/notes.html
-HTML
-{% extends 'base.html' %}
-{% block content %}
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3>@{{ user.username }} sahifasi</h3>
-        <a href="{{ url_for('logout') }}" style="color: red;">Chiqish</a>
-    </div>
-    <hr>
-    <a href="{{ url_for('create_note') }}" class="btn btn-primary">+ Yangi qayd yozish</a>
-    
-    <h4>Sizning qaydlaringiz:</h4>
-    {% if notes %}
-        {% for note in notes %}
-            <div class="note">
-                <h5>{{ note.title }} <small style="color: gray;">({{ note.created_at.strftime('%Y-%m-%d %H:%M') }})</small></h5>
-                <p>{{ note.body }}</p>
-                <a href="{{ url_for('edit_note', id=note.id) }}" class="btn-link">Tahrirlash</a> | 
-                
-                <form action="{{ url_for('delete_note', id=note.id) }}" method="POST" style="display:inline;" onsubmit="return confirm('O\'chirilsinmi?');">
-                    <button type="submit" class="btn-link" style="color: red;">O'chirish</button>
-                </form>
-            </div>
-        {% endfor %}
-    {% else %}
-        <p>Hozircha qaydlar yo'q.</p>
-    {% endif %}
-{% endblock %}
-templates/create_note.html
-HTML
-{% extends 'base.html' %}
-{% block content %}
-    <h3>Yangi qayd qo'shish</h3>
-    <form method="POST">
-        <input type="text" name="title" placeholder="Sarlavha" style="width: 95%; padding: 8px;" required><br><br>
-        <textarea name="body" placeholder="Matn..." rows="5" style="width: 95%; padding: 8px;" required></textarea><br><br>
-        <button type="submit" class="btn btn-primary">Saqlash</button>
-        <a href="{{ url_for('list_notes') }}">Orqaga</a>
-    </form>
-{% endblock %}
-templates/edit_note.html
-HTML
-{% extends 'base.html' %}
-{% block content %}
-    <h3>Qaydni tahrirlash</h3>
-    <form method="POST">
-        <input type="text" name="title" value="{{ note.title }}" style="width: 95%; padding: 8px;" required><br><br>
-        <textarea name="body" rows="5" style="width: 95%; padding: 8px;" required>{{ note.body }}</textarea><br><br>
-        <button type="submit" class="btn btn-primary">Yangilash</button>
-        <a href="{{ url_for('list_notes') }}">Bekor qilish</a>
-    </form>
-{% endblock %}
-Diqqat qilinishi kerak bo'lgan asosiy nuqtalar:
-cascade="all, delete-orphan": Bu munosabat (relationship) o'rnatilganda juda muhim. Agar tizimdan biror User o'chirib tashlansa, unga tegishli bo'lgan barcha Notelar bazada yetim (orphan) bo'lib qolmasdan, avtomatik ravishda tozalab tashlanadi.
+Bosh sahifaga o'tish: url_for('main.index')
 
-Xavfsizlik Devori (abort(403)): Agar biron bir ayyor foydalanuvchi tizimga kirib, brauzer manzillar panelida qo'lda boshqa birovning qayd ID sini tahrirlashga urinsa (masalan: /notes/5/edit), kod darhol note.user_id != session['user_id'] shartini tekshiradi va unga 403 Forbidden xatoligini qaytarib, o'zgartirishga yo'l qo'ymaydi.
+Eslatmalar ro'yxatiga o'tish: url_for('notes.index')
+
+Yangi eslatma yaratish: url_for('notes.create')
+
+Tahrirlash sahifasi (ID bilan): url_for('notes.edit', note_id=note.id)
