@@ -1,102 +1,95 @@
 # python-flask
-Ajoyib, ushbu talablar asosida Flask loyihasining minimal strukturasi, kodlari va GitHub uchun tayyor README.md faylini taqdim etaman.
+Talablaringiz asosida yaratilgan, kamida 3 ta routeni o'z ichiga olgan, dinamik parametrli va url_for() yordamida o'zaro bog'langan Flask loyihasi tayyor.
 
-Loyiha quyidagi fayllardan iborat bo'ladi:
-
-app.py — asosiy dastur kodi.
-
-requirements.txt — kerakli kutubxonalar ro'yxati.
-
-README.md — loyihani ishga tushirish bo'yicha qo'llanma.
+Loyihani oson sinab ko'rish uchun quyidagi fayl strukturasidan foydalanishingiz mumkin:
 
 1. Dastur kodi (app.py)
-Ushbu faylda so'ralgan ikkita (/ va /time) route yozilgan va dastur debug rejimida ishga tushadi:
+Ushbu kodda 3 ta route va sahifalar orasida navigatsiya qilish uchun url_for() funksiyasidan foydalanilgan. Shuningdek, dinamik <name> parametri ham kiritilgan.
 
 Python
-from flask import Flask, jsonify
-from datetime import datetime
+from flask import Flask, url_for
 
 app = Flask(__name__)
 
-# 1-route: Asosiy sahifa
+# 1-route: Bosh sahifa
 @app.route('/')
 def home():
-    return "Xush kelibsiz! Flask ilovasi muvaffaqiyatli ishlamoqda. Vaqtni ko'rish uchun /time sahifasiga o'ting."
+    # url_for orqali boshqa sahifalarga link yaratamiz
+    about_url = url_for('about')
+    greet_url = url_for('greet', name='Ali')
+    
+    html = f"""
+    <h1>Bosh sahifa</h1>
+    <p>Flask ilovasiga xush kelibsiz!</p>
+    <ul>
+        <li><a href="{about_url}">Biz haqimizda sahifasiga o'tish</a></li>
+        <li><a href="{greet_url}">Ali bilan salomlashish sahifasiga o'tish (Dinamik)</a></li>
+    </ul>
+    """
+    return html
 
-# 2-route: Joriy vaqtni JSON formatida qaytarish
-@app.route('/time')
-def get_time():
-    now = datetime.now()
-    return jsonify({
-        "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "timezone": "Tashkent"
-    })
+# 2-route: Biz haqimizda sahifasi
+@app.route('/about')
+def about():
+    home_url = url_for('home')
+    html = f"""
+    <h1>Biz haqimizda</h1>
+    <p>Ushbu loyiha Flask routerlarini va url_for() funksiyasini tushunish uchun yaratildi.</p>
+    <a href="{home_url}">Bosh sahifaga qaytish</a>
+    """
+    return html
+
+# 3-route: Dinamik <name> parametri bilan salomlashish sahifasi
+@app.route('/user/<name>')
+def greet(name):
+    home_url = url_for('home')
+    html = f"""
+    <h1>Salom, {name}!</h1>
+    <p>Sizning ismingiz URL orqali dinamik tarzda qabul qilindi.</p>
+    <a href="{home_url}">Bosh sahifaga qaytish</a>
+    """
+    return html
 
 if __name__ == '__main__':
-    # debug=True rejimida ishga tushirish
     app.run(debug=True)
-2. Kutubxonalar ro'yxati (requirements.txt)
-Loyiha ishlashi uchun faqatgina Flask kutubxonasi talab etiladi:
-
-Plaintext
-flask>=3.0.0
-3. GitHub uchun qo'llanma (README.md)
-GitHub repoga joylashtirish va loyihani qanday ishga tushirishni tushuntiruvchi tayyor README.md fayli:
+2. Loyiha qo'llanmasi (README.md)
+GitHub yoki loyiha papkasida qoldirish uchun har bir routening misol URL manzillari ko'rsatilgan qo'llanma:
 
 Markdown
-# Sodda Flask Vaqt API Loyihasi
+# Flask Dinamik Router va Navigatsiya Loyihasi
 
-Ushbu loyiha Flask freymvorkida yaratilgan minimal web-ilova bo'lib, ikkita route (`/` va `/time`) orqali ishlaydi.
+Ushbu loyihada Flask freymvorkida sahifalararo bog'lanish (`url_for`) va dinamik URL parametrlaridan foydalanish ko'rsatilgan.
 
-## Loyiha tarkibi
-* `app.py` - Asosiy dastur kodi (debug rejimida ishlaydi)
-* `requirements.txt` - Kerakli Python kutubxonalari
+## Loyihani ishga tushirish
 
-## Qanday ishga tushiriladi?
-
-Loyihani kompyuteringizda ishga tushirish uchun quyidagi qadamlarni bajaring:
-
-### 1. Repozitoriyani yuklab olish (Clone)
-Terminal yoki Git kross-platformasida quyidagi buyruqni bajaring:
-```bash
-git clone <github-repo-linki>
-cd <repo-nomi>
-2. Virtual muhit yaratish va faollashtirish (Tavsiya etiladi)
-Bash
-# Windows uchun:
-python -m venv venv
-venv\Scripts\activate
-
-# macOS / Linux uchun:
-python3 -m venv venv
-source venv/bin/activate
-3. Kerakli kutubxonalarni o'rnatish
-requirements.txt faylidagi barcha bog'liqliklarni yuklab olish:
-
-Bash
-pip install -r requirements.txt
-4. Loyihani ishga tushirish
-Ilovani ishga tushirish uchun quyidagi buyruqni bering:
+1. Virtual muhitni faollashtiring va Flask-ni o'rnating:
+   ```bash
+   pip install flask
+Dasturni ishga tushiring:
 
 Bash
 python app.py
-Ilova mahalliy serverda http://127.0.0.1:5000 manzilida ishga tushadi.
+Ilova standart holatda http://127.0.0.1:5000 manzilida ishlaydi.
 
-Raxna (Routes) ro'yxati
-http://127.0.0.1:5000/ — Bosh sahifa (Oddiy matn ko'rinishida javob).
+Route-lar ro'yxati va misol URL-manzillar
+Ilova ishga tushgach, brauzer orqali quyidagi manzillarga kirib tekshirishingiz mumkin:
 
-http://127.0.0.1:5000/time — Joriy vaqt (JSON formatida javob).
+Bosh sahifa (Home):
 
+URL: http://127.0.0.1:5000/
 
----
+Tavsif: Saytning asosiy sahifasi. Ichida boshqa sahifalarga o'tish uchun dinamik linklar mavjud.
 
-### GitHub-ga yuklash bosqichlari (Eslatma)
-Agar loyihani GitHub-ga birinchi marta yuklayotgan bo'lsangiz, terminalda ketma-ket quyidagi buyruqlarni yozasiz:
+Biz haqimizda sahifasi (About):
 
-```bash
-git init
-git add .
-git commit -m "Initial commit: Flask app va README qo'shildi"
-git branch -M main
-git remote add origin <Sizning_GitHub_Repo_Linkigiz>
-git push -u origin main
+URL: http://127.0.0.1:5000/about
+
+Tavsif: Loyiha haqida ma'lumot beruvchi statik route.
+
+Dinamik salomlashish sahifasi (Greet):
+
+Misol URL 1: http://127.0.0.1:5000/user/Ali (Ekranga "Salom, Ali!" deb chiqaradi)
+
+Misol URL 2: http://127.0.0.1:5000/user/Zilola (Ekranga "Salom, Zilola!" deb chiqaradi)
+
+Tavsif: URL tarkibidagi <name> o'zgaruvchisini olib, sahifada dinamik aks ettiradi.
