@@ -1,47 +1,122 @@
 # python-flask
-Loyiha quyidagi fayllardan tashkil topadi:
+Loyiha talablaringiz asosida yaratilgan, qidiruv tizimiga ega, statik CSS uslublari bilan bezatilgan va katta/kichik harflarni farqlamaydigan (case-insensitive) Flask ilovasi tayyor.
 
-app.py — Dastur kodi va retseptlar ma'lumotlar bazasi (dict).
+Loyiha quyidagi fayl strukturasidan tashkil topadi:
 
-templates/base.html — Asosiy shablon (ota shablon).
+app.py — Dastur kodi va qidiruv logikasi.
 
-templates/index.html — Retseptlar ro'yxati sahifasi.
+static/style.css — Vizual ko'rinish (dizayn) fayli.
 
-templates/detail.html — Har bir retseptning batafsil sahifasi.
+templates/index.html — Qidiruv shakli va natijalar sahifasi.
 
 1. Dastur kodi (app.py)
+Ushbu kodda ma'lumotlarni qidirishda .lower() metodidan foydalanilgan. Bu foydalanuvchi "olma", "Olma" yoki "OLMA" deb yozishidan qat'i nazar, qidiruv to'g'ri ishlashini ta'minlaydi (case-insensitive).
+
 Python
-from flask import Flask, render_template, abort
+from flask import Flask, render_template, request
 
 app = Flask(__name__)
 
-# Kamida 5 ta retseptdan iborat ma'lumotlar (dict)
-# Narxi 0 bo'lgan retseptlar shart bajarilishini tekshirish uchun kiritildi
-recipes = {
-    1: {"title": "Somsa", "description": "O'zbekona tansiq taom, pechda pishiriladi.", "price": 15000, "ingredients": ["Go'sht", "Piyoz", "Xamir", "Dumba yog'i"]},
-    2: {"title": "Osh (Palov)", "description": "Toshkentcha bayramona osh retsepti.", "price": 25000, "ingredients": ["Guruch", "Go'sht", "Sabzi", "Piyoz", "Yog'"]},
-    3: {"title": "Chuchvara suvi", "description": "Uydagilar uchun foydali va mazali sho'rva tayyorlash usuli.", "price": 0, "ingredients": ["Xamir", "Qiymali go'sht", "Ziravorlar", "Suv"]},
-    4: {"title": "Meva salati", "description": "Tez va oson tayyorlanadigan vitaminli salat.", "price": 12000, "ingredients": ["Olma", "Banan", "Apelsin", "Yogurt"]},
-    5: {"title": "Muzdek Limonad", "description": "Yoz kunlari uchun tetiklashtiruvchi bepul uy sharoitidagi retsept.", "price": 0, "ingredients": ["Suv", "Limon", "Yalpiz", "Shakar"]}
-}
+# Qidiruv amalga oshiriladigan ma'lumotlar ro'yxati
+ITEMS = [
+    "Olma noutbuklari va texnologiyalari",
+    "Python dasturlash tili bo'yicha qo'llanma",
+    "Flask yordamida veb-sayt yaratish sirlari",
+    "Sun'iy intellekt va kelajak texnologiyalari",
+    "Ma'lumotlar bazasi (SQL) asoslari",
+    "JavaScript va zamonaviy veb frameworklar"
+]
 
-# 1-route: Barcha retseptlar ro'yxati
 @app.route('/')
 def index():
-    return render_template('index.html', recipes=recipes)
-
-# 2-route: Har bir retsept uchun alohida batafsil sahifa
-@app.route('/recipes/<int:recipe_id>')
-def recipe_detail(recipe_id):
-    recipe = recipes.get(recipe_id)
-    if recipe is None:
-        abort(404)  # Agar retsept topilmasa, 404 xatolik qaytaradi
-    return render_template('detail.html', recipe=recipe)
+    # URL'dan 'q' parametrini olamiz (GET so'rov orqali)
+    query = request.args.get('q', '').strip()
+    
+    results = []
+    if query:
+        # Katta-kichik harf farqlamasligi uchun ikkala tomonni ham kichik harfga o'tkazamiz
+        results = [item for item in ITEMS if query.lower() in item.lower()]
+        
+    return render_template('index.html', query=query, results=results)
 
 if __name__ == '__main__':
     app.run(debug=True)
-2. Ota shablon (templates/base.html)
-Barcha sahifalar uchun umumiy bo'lgan dizayn asosi:
+2. Statik dizayn (static/style.css)
+Sahifani chiroyli ko'rinishga keltirish uchun oddiy va toza dizayn:
+
+CSS
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f4f7f6;
+    margin: 0;
+    padding: 40px;
+    display: flex;
+    justify-content: center;
+}
+
+.search-container {
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 500px;
+}
+
+h2 {
+    color: #333;
+    margin-bottom: 20px;
+}
+
+.search-form {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.search-input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 16px;
+}
+
+.search-button {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.search-button:hover {
+    background-color: #0056b3;
+}
+
+.results-list {
+    list-style: none;
+    padding: 0;
+}
+
+.results-list li {
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+    color: #555;
+}
+
+.no-result {
+    color: #dc3545;
+    font-weight: bold;
+    background-color: #f8d7da;
+    padding: 10px;
+    border-radius: 5px;
+    text-align: center;
+}
+3. HTML shabloni (templates/index.html)
+Bu yerda CSS fayli Flask standartlariga mos ravishda url_for orqali ulangan. Shuningdek, {% if %} yordamida qidiruv natijasi bo'sh bo'lgan holat tekshirilgan:
 
 HTML
 <!DOCTYPE html>
@@ -49,92 +124,44 @@ HTML
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Pazandachilik Sayti{% endblock %}</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f9f9f9; }
-        .container { max-width: 800px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; }
-        .recipe-card { border-bottom: 1px solid #eee; padding: 15px 0; }
-        .badge-free { background-color: #28a745; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.9em; }
-        .price { font-weight: bold; color: #e67e22; }
-    </style>
+    <title>Aqlli Qidiruv Tizimi</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h2>👨‍🍳 Pazandalik Sirlari</h2>
-            <hr>
-        </header>
 
-        <main>
-            {% block content %}
-            {% endblock %}
-        </main>
-    </div>
+<div class="search-container">
+    <h2>Ma'lumotlar bazasidan qidirish</h2>
+    
+    <form action="/" method="GET" class="search-form">
+        <input type="text" name="q" value="{{ query }}" placeholder="Kalit so'zni kiriting..." class="search-input" required>
+        <button type="submit" class="search-button">Qidirish</button>
+    </form>
+
+    {% if query %}
+        <h3>"{{ query }}" bo'yicha qidiruv natijalari:</h3>
+        
+        {% if results %}
+            <ul class="results-list">
+                {% for result in results %}
+                    <li>🔍 {{ result }}</li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="no-result">Hech narsa topilmadi</p>
+        {% endif %}
+    {% endif %}
+</div>
+
 </body>
 </html>
-3. Ro'yxat sahifasi (templates/index.html)
-Ushbu sahifada {% for %} tsikli hamda narxni tekshirish uchun {% if %} sharti ishlatilgan:
+Fayllarni joylashtirish tartibi:
+Loyihangiz to'g'ri ishlashi uchun fayllarni quyidagi papka tartibida joylashtiring:
 
-HTML
-{% extends 'base.html' %}
-
-{% block title %}Barcha Retseptlar{% endblock %}
-
-{% block content %}
-    <h1>Bizning retseptlar ro'yxati</h1>
-    
-    <div>
-        {% for id, recipe in recipes.items() %}
-            <div class="recipe-card">
-                <h3><a href="/recipes/{{ id }}">{{ recipe.title }}</a></h3>
-                <p>{{ recipe.description }}</p>
-                <p>
-                    Narxi: 
-                    {% if recipe.price == 0 %}
-                        <span class="badge-free">Bepul</span>
-                    {% else %}
-                        <span class="price">{{ recipe.price }} so'm</span>
-                    {% endif %}
-                </p>
-            </div>
-        {% endfor %}
-    </div>
-{% endblock %}
-4. Batafsil sahifa (templates/detail.html)
-Har bir retseptning tarkibiy mahsulotlarini ko'rsatuvchi sahifa:
-
-HTML
-{% extends 'base.html' %}
-
-{% block title %}{{ recipe.title }} Retsepti{% endblock %}
-
-{% block content %}
-    <h1>{{ recipe.title }}</h1>
-    <p><strong>Tavsif:</strong> {{ recipe.description }}</p>
-    
-    <p><strong>Narxi:</strong> 
-        {% if recipe.price == 0 %}
-            <span class="badge-free">Bepul uchrashuv / Maslahat</span>
-        {% else %}
-            <span class="price">{{ recipe.price }} so'm</span>
-        {% endif %}
-    </p>
-
-    <h3>Kerakli mahsulotlar:</h3>
-    <ul>
-        {% for ingredient in recipe.ingredients %}
-            <li>{{ ingredient }}</li>
-        {% endfor %}
-    </ul>
-
-    <p style="margin-top: 30px;">
-        <a href="/">← Orqaga (Ro'yxatga qaytish)</a>
-    </p>
-{% endblock %}
-Loyihani ishga tushirish qadamlari:
-Loyiha papkasida templates nomli yangi jild (folder) oching.
-
-app.py faylini tashqariga, qolgan 3 ta .html shablonlarini esa templates papkasining ichiga joylashtiring.
-
-Terminalda python app.py buyrug'ini bering va http://127.0.0.1:5000 manzili orqali brauzerda tekshiring.
+Plaintext
+📂 loyiha-papki/
+├── 📄 app.py
+├── 📂 static/
+│   └── 📄 style.css
+└── 📂 templates/
+    └── 📄 index.html
+Ilovani python app.py orqali ishga tushirib, brauzerda http://127.0.0.1:5000 manzilida sinab ko'rishingiz mumkin.
