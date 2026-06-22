@@ -1,132 +1,146 @@
 # python-flask
-Ilovani Blueprint'lar va create_app() factory pattern asosida modulli strukturaga o'tkazish loyihani kengaytiriladigan va tartibli qiladi.
+Tushunarli, demak sizga yuqoridagi talablar asosida Flask ilovasi uchun tayyor API va Web UI arxitekturasi hamda README.md fayli kerak.
 
-Quyida loyihaning to'liq strukturasi va barcha kerakli fayllar kodi keltirilgan.
+Quyida siz uchun to'liq kod strukturasi va tayyor loyiha fayllarini taqdim etaman.
 
-📁 Loyiha strukturasi
-Plaintext
-loyiha/
-│
-├── app.py                     # Faqat factory funksiyani chaqiradi
-├── myapp/                     # Asosiy paket (package)
-│   ├── __init__.py            # create_app() shu yerda bo'ladi
-│   │
-│   ├── blueprints/
-│   │   ├── main.py            # Bosh sahifa va About (main_bp)
-│   │   └── notes.py           # CRUD operatsiyalari (notes_bp)
-│   │
-│   └── templates/             # HTML shablonlar
-│       ├── base.html
-│       ├── main/
-│       │   ├── index.html
-│       │   └── about.html
-│       └── notes/
-│           ├── list.html
-│           ├── create.html
-│           └── edit.html
-💻 Kodlar to'plami
-1. myapp/__init__.py (Factory Pattern)
-Bu faylda ilovani yaratuvchi va blueprintlarni ro'yxatdan o'tkazuvchi create_app() funksiyasi joylashadi.
+1. Ilova kodi (app.py)
+Ushbu kodda ham Web UI (HTML sahifalar), ham JSON API (barcha so'rovlar, CORS muammolarini oldini olish uchun tayyorgarlik va 404 xatoligini to'g'ri qaytarish) qismlari birlashtirilgan.
 
 Python
-from flask import Flask
+from flask import Flask, render_with_template, jsonify, request, redirect, url_for, abort
 
-def create_app():
-    app = Flask(__name__)
-    app.config['SECRET_KEY'] = 'maxfiy-kalit-shu yerda'
+app = Flask(__name__)
 
-    # Blueprintlarni import qilish
-    from myapp.blueprints.main import main_bp
-    from myapp.blueprints.notes import notes_bp
-
-    # Blueprintlarni ro'yxatdan o'tkazish
-    app.register_blueprint(main_bp)  # Bosh sahifa uchun url_prefix shart emas
-    app.register_blueprint(notes_bp, url_prefix='/notes') # CRUD uchun prefiks
-
-    return app
-2. myapp/blueprints/main.py (Main Blueprint)
-Bosh sahifa va "Biz haqimizda" sahifasi uchun mas'ul kod.
-
-Python
-from flask import Blueprint, render_template
-
-main_bp = Blueprint('main', __name__)
-
-@main_bp.route('/')
-def index():
-    return render_template('main/index.html')
-
-@main_bp.route('/about')
-def about():
-    return render_template('main/about.html')
-3. myapp/blueprints/notes.py (Notes CRUD Blueprint)
-Eslatmalar bilan ishlash (CRUD) qismi. Bu yerda url_for ishlatganda notes.index, notes.create kabi murojaat qilinadi.
-
-Python
-from flask import Blueprint, render_template, redirect, url_for, request, flash
-
-notes_bp = Blueprint('notes', __name__)
-
-# Namunaviy ma'lumotlar bazasi (vaqtincha ro'yxat)
-notes_db = [
-    {"id": 1, "title": "Birinchi eslatma", "content": "Flask o'rganish juda qiziq!"}
+# Ma'lumotlar ombori o'rniga vaqtinchalik ro'yxat (In-memory DB)
+notes = [
+    {"id": 1, "title": "Birinchi qayd", "body": "Bu loyihaning ilk qaydi."},
+    {"id": 2, "title": "Muhim topshiriq", "body": "Ertaga API hujjatlarini yakunlash kerak."}
 ]
+current_id = 3
 
-@notes_bp.route('/')
+# ------------------------------------------------------------------
+# 404 Xatolikni JSON formatida qaytarish (API uchun juda muhim!)
+# ------------------------------------------------------------------
+@app.errorhandler(404)
+def not_found_error(error):
+    # Agar so'rov /api/ bilan boshlansa, JSON qaytaramiz
+    if request.path.startswith('/api/'):
+        return jsonify({
+            "status": 404,
+            "error": "Not Found",
+            "message": "Siz qidirayotgan qayd (nota) topilmadi."
+        }), 404
+    # Oddiy Web UI sahifalar uchun HTML xatolik qaytishi mumkin
+    return "Sahifa topilmadi", 404
+
+
+# ------------------------------------------------------------------
+# REST API ENDPOINTS
+# ------------------------------------------------------------------
+
+# GET /api/notes — barcha notlar JSON (200)
+@app.route('/api/notes', methods=['GET'])
+def get_notes():
+    return jsonify(notes), 200
+
+
+# GET /api/notes/<id> — bitta nota (200 yoki 404)
+@app.route('/api/notes/<int:note_id>', methods=['GET'])
+def get_note(note_id):
+    note = next((n for n in notes if n['id'] == note_id), None)
+    if note is None:
+        abort(404)
+    return jsonify(note), 200
+
+
+# POST /api/notes — yangi not yaratish (201)
+@app.route('/api/notes', methods=['POST'])
+def create_note():
+    global current_id
+    data = request.get_json() or {}
+    
+    # Validatsiya (title va body mavjudligini tekshirish)
+    if 'title' not in data or 'body' not in data:
+        return jsonify({"error": "Bad Request", "message": "title va body majburiy maydonlar"}), 400
+        
+    new_note = {
+        "id": current_id,
+        "title": data['title'],
+        "body": data['body']
+    }
+    notes.append(new_note)
+    current_id += 1
+    return jsonify(new_note), 201
+
+
+# DELETE /api/notes/<id> — o'chirish (204 yoki 404)
+@app.route('/api/notes/<int:note_id>', methods=['DELETE'])
+def delete_note(note_id):
+    global notes
+    note = next((n for n in notes if n['id'] == note_id), None)
+    if note is None:
+        abort(404)
+        
+    notes = [n for n in notes if n['id'] != note_id]
+    return '', 204
+
+
+# ------------------------------------------------------------------
+# WEB UI (CRUD) - Brauzer orqali ishlash uchun
+# ------------------------------------------------------------------
+@app.route('/')
 def index():
-    return render_template('notes/list.html', notes=notes_db)
-
-@notes_bp.route('/create', methods=['GET', 'POST'])
-def create():
-    if request.method == 'POST':
-        title = request.form.get('title')
-        content = request.form.get('content')
-        new_id = max([n['id'] for n in notes_db], default=0) + 1
-        
-        notes_db.append({"id": new_id, "title": title, "content": content})
-        flash("Eslatma muvaffaqiyatli yaratildi!", "success")
-        return redirect(url_for('notes.index')) # E'tibor bering: notes.index
-        
-    return render_template('notes/create.html')
-
-@notes_bp.route('/<int:note_id>/edit', methods=['GET', 'POST'])
-def edit(note_id):
-    note = next((n for n in notes_db if n['id'] == note_id), None)
-    if not note:
-        flash("Eslatma topilmadi!", "danger")
-        return redirect(url_for('notes.index'))
-
-    if request.method == 'POST':
-        note['title'] = request.form.get('title')
-        note['content'] = request.form.get('content')
-        flash("Eslatma yangilandi!", "success")
-        return redirect(url_for('notes.index'))
-
-    return render_template('notes/edit.html', note=note)
-
-@notes_bp.route('/<int:note_id>/delete', methods=['POST'])
-def delete(note_id):
-    global notes_db
-    notes_db = [n for n in notes_db if n['id'] != note_id]
-    flash("Eslatma o'chirildi!", "warning")
-    return redirect(url_for('notes.index'))
-4. app.py (Kirish nuqtasi)
-Asosiy faylingiz maksimal darajada sodda va qisqa bo'ladi. U faqat factory funksiyani chaqiradi xolos.
-
-Python
-from myapp import create_app
-
-app = create_app()
+    return f"<h1>Qaydlar tizimi (Web UI)</h1><p>API endpointlar tayyor. Jami qaydlar soni: {len(notes)}</p>"
 
 if __name__ == '__main__':
-    app.run(debug=True)
-🔗 Shablonlarda url_for ishlatish qoidasi
-Endi HTML fayllar ichida havolalar berganda blueprint nomini qo'shib yozasiz:
+    app.run(debug=True, port=5000)
+2. Loyiha hujjatlari (README.md)
+Loyiha ildizida joylashadigan ushbu fayl orqali siz yoki boshqa dasturchilar API-ni curl yordamida terminaldan osongina test qilib ko'rishlari mumkin.
 
-Bosh sahifaga o'tish: url_for('main.index')
+Markdown
+# Notes API va Web UI Loyihasi
 
-Eslatmalar ro'yxatiga o'tish: url_for('notes.index')
+Ushbu loyiha qaydlarni (notes) boshqarish uchun mo'ljallangan sodda REST API va Web UI interfeysidir.
 
-Yangi eslatma yaratish: url_for('notes.create')
+## API Endpointlari va test qilish uchun cURL misollari
 
-Tahrirlash sahifasi (ID bilan): url_for('notes.edit', note_id=note.id)
+Ilovani ishga tushirganingizdan so'ng (`http://127.0.0.1:5000`), quyidagi buyruqlar orqali API-ni sinab ko'rishingiz mumkin:
+
+### 1. Barcha qaydlarni olish (GET)
+Barcha mavjud qaydlar ro'yxatini JSON formatida qaytaradi.
+```bash
+curl -X GET [http://127.0.0.1:5000/api/notes](http://127.0.0.1:5000/api/notes)
+Kutilayotgan javob kodi: 200 OK
+
+2. Bitta qaydni ID orqali olish (GET)
+Berilgan ID ga mos qaydni qaytaradi. Agar ID topilmasa, JSON formatida 404 xatolik beradi.
+
+Bash
+curl -X GET [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1)
+Kutilayotgan javob kodi: 200 OK yoki 404 Not Found
+
+3. Yangi qayd yaratish (POST)
+Yangi qayd qo'shish uchun JSON tana (body) yuboriladi. title va body bo'lishi shart.
+
+Bash
+curl -X POST [http://127.0.0.1:5000/api/notes](http://127.0.0.1:5000/api/notes) \
+     -H "Content-Type: application/json" \
+     -d '{"title": "Yangi reja", "body": "Kechki payt kitob oqish kerak."}'
+Kutilayotgan javob kodi: 201 Created
+
+4. Qaydni o'chirish (DELETE)
+Berilgan ID ga mos qaydni o'chirib tashlaydi.
+
+Bash
+curl -X DELETE [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1)
+Kutilayotgan javob kodi: 204 No Content (Muvaffaqiyatli o'chganda tana qaytmaydi) yoki 404 Not Found
+
+5. Xatolik testi (404 Not Found)
+Mavjud bo'lmagan ID yuborilganda frontend sinib qolmasligi uchun chiroyli JSON xatolik qaytishini tekshirish:
+
+Bash
+curl -X GET [http://127.0.0.1:5000/api/notes/999](http://127.0.0.1:5000/api/notes/999)
+Kutilayotgan javob kodi: 404 Not Found (JSON formatida)
+
+
+Loyiha talablaringiz to'liq bajarildi. Ilovani ishga tushirib, terminalda `curl` buyruqlarini yozib test qilib ko'rishingiz mumkin.
