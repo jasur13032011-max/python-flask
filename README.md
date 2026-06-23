@@ -1,167 +1,268 @@
 # python-flask
-Loyiha talablaringiz asosida yaratilgan, qidiruv tizimiga ega, statik CSS uslublari bilan bezatilgan va katta/kichik harflarni farqlamaydigan (case-insensitive) Flask ilovasi tayyor.
+Mana yuqorida ko'rsatilgan barcha talablarga (Factory Pattern, Blueprints, Session-based Auth, Notes CRUD, JSON xatoliklar va curl misollari) to'liq javob beradigan toza va professional Flask loyihasi strukturasi hamda kodi.
 
-Loyiha quyidagi fayl strukturasidan tashkil topadi:
-
-app.py — Dastur kodi va qidiruv logikasi.
-
-static/style.css — Vizual ko'rinish (dizayn) fayli.
-
-templates/index.html — Qidiruv shakli va natijalar sahifasi.
-
-1. Dastur kodi (app.py)
-Ushbu kodda ma'lumotlarni qidirishda .lower() metodidan foydalanilgan. Bu foydalanuvchi "olma", "Olma" yoki "OLMA" deb yozishidan qat'i nazar, qidiruv to'g'ri ishlashini ta'minlaydi (case-insensitive).
+Loyiha Strukturasi (Project Structure)
+Plaintext
+note_api_project/
+│
+├── app/
+│   ├── __init__.py          # Flask app factory (create_app)
+│   ├── auth.py              # Login, logout va me endpointlari (auth_bp)
+│   └── notes.py             # Notes CRUD endpointlari (notes_bp)
+│
+├── README.md                # Loyihani ishga tushirish va curl misollari
+└── run.py                   # Loyihani ishga tushiruvchi asosiy fayl
+Kod realizatsiyasi
+1. app/__init__.py (Application Factory)
+Ushbu faylda create_app() funksiyasi yaratiladi, xatoliklar JSON formatiga keltiriladi va Blueprint'lar ro'yxatdan o'tkaziladi.
 
 Python
-from flask import Flask, render_template, request
+from flask import Flask, jsonify
 
-app = Flask(__name__)
-
-# Qidiruv amalga oshiriladigan ma'lumotlar ro'yxati
-ITEMS = [
-    "Olma noutbuklari va texnologiyalari",
-    "Python dasturlash tili bo'yicha qo'llanma",
-    "Flask yordamida veb-sayt yaratish sirlari",
-    "Sun'iy intellekt va kelajak texnologiyalari",
-    "Ma'lumotlar bazasi (SQL) asoslari",
-    "JavaScript va zamonaviy veb frameworklar"
-]
-
-@app.route('/')
-def index():
-    # URL'dan 'q' parametrini olamiz (GET so'rov orqali)
-    query = request.args.get('q', '').strip()
+def create_app():
+    app = Flask(__name__)
     
-    results = []
-    if query:
-        # Katta-kichik harf farqlamasligi uchun ikkala tomonni ham kichik harfga o'tkazamiz
-        results = [item for item in ITEMS if query.lower() in item.lower()]
+    # Session ishlashi uchun secret key (haqiqiy loyihada .env dan olinadi)
+    app.config['SECRET_KEY'] = 'super-secret-key-12345'
+    
+    # In-memory "ma'lumotlar bazasi" simulyatsiyasi
+    app.users = {
+        1: {"id": 1, "username": "ali"},
+        2: {"id": 2, "username": "vali"}
+    }
+    app.notes = {
+        1: {"id": 1, "title": "Bozorlik", "content": "Sut va non olish kerak", "user_id": 1},
+        2: {"id": 2, "title": "Darslar", "content": "Flask o'rganish", "user_id": 1},
+        3: {"id": 3, "title": "Kino", "content": "Yangi kinoni ko'rish", "user_id": 2}
+    }
+    app.note_id_counter = 4
+
+    # Global xatoliklarni JSON formatiga o'tkazish
+    @app.errorhandler(400)
+    def bad_request(e):
+        return jsonify({'error': 'Bad Request'}), 400
+
+    @app.errorhandler(401)
+    def unauthorized(e):
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    @app.errorhandler(403)
+    def forbidden(e):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return jsonify({'error': 'Not Found'}), 404
+
+    @app.errorhandler(405)
+    def method_not_allowed(e):
+        return jsonify({'error': 'Method Not Allowed'}), 405
+
+    # Blueprint'larni import qilish va ro'yxatdan o'tkazish
+    from app.auth import auth_bp
+    from app.notes import notes_bp
+
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(notes_bp, url_prefix='/api/notes')
+
+    return app
+2. app/auth.py (Authentication Blueprint)
+Python
+from flask import Blueprint, request, jsonify, session, current_app, abort
+
+auth_bp = Blueprint('auth', __name__)
+
+@auth_bp.route('/login', methods=['POST'])
+def login():
+    data = request.get_json() or {}
+    username = data.get('username')
+    
+    if not username:
+        return jsonify({'error': 'Username is required'}), 400
         
-    return render_template('index.html', query=query, results=results)
+    # Foydalanuvchini qidirish
+    user = None
+    for u_id, u_data in current_app.users.items():
+        if u_data['username'] == username:
+            user = u_data
+            break
+            
+    if not user:
+        return jsonify({'error': 'User not found'}), 401
+        
+    # Sessionga saqlash
+    session['user_id'] = user['id']
+    return jsonify(user), 200
+
+@auth_bp.route('/logout', methods=['POST'])
+def logout():
+    session.pop('user_id', None)
+    return '', 204
+
+@auth_bp.route('/me', methods=['GET'])
+def me():
+    user_id = session.get('user_id')
+    if not user_id:
+        abort(401)
+        
+    user = current_app.users.get(user_id)
+    return jsonify(user), 200
+3. app/notes.py (Notes CRUD Blueprint)
+Python
+from flask import Blueprint, request, jsonify, session, current_app, abort
+
+notes_bp = Blueprint('notes', __name__)
+
+# Login bo'lganini tekshirish uchun yordamchi funksiya
+def get_current_user_id():
+    user_id = session.get('user_id')
+    if not user_id:
+        abort(401)
+    return user_id
+
+@notes_bp.route('', methods=['GET'])
+def get_notes():
+    user_id = get_current_user_id()
+    
+    # Faqat joriy foydalanuvchiga tegishli notalarni filterlash
+    user_notes = [note for note in current_app.notes.values() if note['user_id'] == user_id]
+    return jsonify(user_notes), 200
+
+@notes_bp.route('', methods=['POST'])
+def create_note():
+    user_id = get_current_user_id()
+    data = request.get_json() or {}
+    
+    title = data.get('title')
+    content = data.get('content')
+    
+    if not title or not content:
+        return jsonify({'error': 'Title and content are required'}), 400
+        
+    new_id = current_app.note_id_counter
+    new_note = {
+        "id": new_id,
+        "title": title,
+        "content": content,
+        "user_id": user_id
+    }
+    
+    current_app.notes[new_id] = new_note
+    current_app.note_id_counter += 1
+    
+    return jsonify(new_note), 201
+
+@notes_bp.route('/<int:note_id>', methods=['GET', 'PUT', 'DELETE'])
+def note_detail(note_id):
+    user_id = get_current_user_id()
+    note = current_app.notes.get(note_id)
+    
+    if not note:
+        abort(404)
+        
+    # Boshqa foydalanuvchining notasiga ruxsat bermaslik
+    if note['user_id'] != user_id:
+        abort(403)
+        
+    if request.method == 'GET':
+        return jsonify(note), 200
+        
+    elif request.method == 'PUT':
+        data = request.get_json() or {}
+        title = data.get('title')
+        content = data.get('content')
+        
+        if not title or not content:
+            return jsonify({'error': 'Title and content are required'}), 400
+            
+        note['title'] = title
+        note['content'] = content
+        return jsonify(note), 200
+        
+    elif request.method == 'DELETE':
+        del current_app.notes[note_id]
+        return '', 204
+4. run.py
+Loyihani ishga tushirish uchun asosiy kirish nuqtasi.
+
+Python
+from app import create_app
+
+app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=True)
-2. Statik dizayn (static/style.css)
-Sahifani chiroyli ko'rinishga keltirish uchun oddiy va toza dizayn:
+    app.run(debug=True, port=5000)
+5. README.md (Ishga tushirish va curl hujjatlari)
+Ushbu fayl API bilan qanday ishlashni va har bir endpoint uchun curl buyruqlarini o'z ichiga oladi. Session cookie faylini saqlash va yuborish uchun curl dagi -c cookies.txt va -b cookies.txt flaglaridan foydalaniladi.
 
-CSS
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #f4f7f6;
-    margin: 0;
-    padding: 40px;
-    display: flex;
-    justify-content: center;
-}
+Markdown
+# Note Sharing JSON API
 
-.search-container {
-    background: white;
-    padding: 30px;
-    border-radius: 10px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    width: 100%;
-    max-width: 500px;
-}
+Bu session-based autentifikatsiyaga ega bo'lgan eslatmalar (notes) boshqaruv API tizimi.
 
-h2 {
-    color: #333;
-    margin-bottom: 20px;
-}
+## Ishga tushirish
 
-.search-form {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-}
+1. Kutubxonalarni o'rnating:
+```bash
+pip install flask
+Serverni yoqing:
 
-.search-input {
-    flex: 1;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    font-size: 16px;
-}
+Bash
+python run.py
+API Endpoints va curl Misollari
+1. Auth Blueprint (/api/auth/...)
+🔐 Login (POST)
+Foydalanuvchi sifatida tizimga kirish va cookielarni saqlash.
 
-.search-button {
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 16px;
-}
+Bash
+curl -X POST [http://127.0.0.1:5000/api/auth/login](http://127.0.0.1:5000/api/auth/login) \
+     -H "Content-Type: application/json" \
+     -d '{"username": "ali"}' \
+     -c cookies.txt
+👤 Joriy foydalanuvchi (GET)
+Kirgan foydalanuvchi ma'lumotlarini olish (Cookie talab qilinadi).
 
-.search-button:hover {
-    background-color: #0056b3;
-}
+Bash
+curl -X GET [http://127.0.0.1:5000/api/auth/me](http://127.0.0.1:5000/api/auth/me) \
+     -b cookies.txt
+🚪 Logout (POST)
+Tizimdan chiqish (Sessionni o'chirish).
 
-.results-list {
-    list-style: none;
-    padding: 0;
-}
+Bash
+curl -X POST [http://127.0.0.1:5000/api/auth/logout](http://127.0.0.1:5000/api/auth/logout) \
+     -b cookies.txt
+2. Notes Blueprint (/api/notes/...)
+📝 Barcha eslatmalarni olish (GET)
+Faqat tizimga kirgan foydalanuvchining eslatmalarini qaytaradi.
 
-.results-list li {
-    padding: 12px;
-    border-bottom: 1px solid #eee;
-    color: #555;
-}
+Bash
+curl -X GET [http://127.0.0.1:5000/api/notes](http://127.0.0.1:5000/api/notes) \
+     -b cookies.txt
+➕ Yangi eslatma yaratish (POST)
+Bash
+curl -X POST [http://127.0.0.1:5000/api/notes](http://127.0.0.1:5000/api/notes) \
+     -H "Content-Type: application/json" \
+     -d '{"title": "Yangi Nota", "content": "Bu test eslatma mazmuni"}' \
+     -b cookies.txt
+📖 Aniq bir eslatmani ko'rish (GET)
+Bash
+curl -X GET [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1) \
+     -b cookies.txt
+✏️ Eslatmani to'liq yangilash (PUT)
+Bash
+curl -X PUT [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1) \
+     -H "Content-Type: application/json" \
+     -d '{"title": "Yangilangan Sarlavha", "content": "Yangilangan matn"}' \
+     -b cookies.txt
+❌ Eslatmani o'chirish (DELETE)
+Bash
+curl -X DELETE [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1) \
+     -b cookies.txt
+Xatolik Holatlari (JSON Error Responses)
+Agar noto'g'ri ID berilsa yoki login qilmasdan so'rov yuborilsa, tizim quyidagicha toza JSON javob qaytaradi:
 
-.no-result {
-    color: #dc3545;
-    font-weight: bold;
-    background-color: #f8d7da;
-    padding: 10px;
-    border-radius: 5px;
-    text-align: center;
-}
-3. HTML shabloni (templates/index.html)
-Bu yerda CSS fayli Flask standartlariga mos ravishda url_for orqali ulangan. Shuningdek, {% if %} yordamida qidiruv natijasi bo'sh bo'lgan holat tekshirilgan:
+401 Unauthorized: {"error": "Unauthorized"}
 
-HTML
-<!DOCTYPE html>
-<html lang="uz">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aqlli Qidiruv Tizimi</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
+403 Forbidden: {"error": "Forbidden"} (Boshqa odamning notasini o'chirmoqchi yoki ko'rmoqchi bo'lganda)
 
-<div class="search-container">
-    <h2>Ma'lumotlar bazasidan qidirish</h2>
-    
-    <form action="/" method="GET" class="search-form">
-        <input type="text" name="q" value="{{ query }}" placeholder="Kalit so'zni kiriting..." class="search-input" required>
-        <button type="submit" class="search-button">Qidirish</button>
-    </form>
-
-    {% if query %}
-        <h3>"{{ query }}" bo'yicha qidiruv natijalari:</h3>
-        
-        {% if results %}
-            <ul class="results-list">
-                {% for result in results %}
-                    <li>🔍 {{ result }}</li>
-                {% endfor %}
-            </ul>
-        {% else %}
-            <p class="no-result">Hech narsa topilmadi</p>
-        {% endif %}
-    {% endif %}
-</div>
-
-</body>
-</html>
-Fayllarni joylashtirish tartibi:
-Loyihangiz to'g'ri ishlashi uchun fayllarni quyidagi papka tartibida joylashtiring:
-
-Plaintext
-📂 loyiha-papki/
-├── 📄 app.py
-├── 📂 static/
-│   └── 📄 style.css
-└── 📂 templates/
-    └── 📄 index.html
-Ilovani python app.py orqali ishga tushirib, brauzerda http://127.0.0.1:5000 manzilida sinab ko'rishingiz mumkin.
+404 Not Found: {"error": "Not Found"}
