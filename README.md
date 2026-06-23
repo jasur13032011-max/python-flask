@@ -1,268 +1,289 @@
 # python-flask
-Mana yuqorida ko'rsatilgan barcha talablarga (Factory Pattern, Blueprints, Session-based Auth, Notes CRUD, JSON xatoliklar va curl misollari) to'liq javob beradigan toza va professional Flask loyihasi strukturasi hamda kodi.
+Loyiha talablariga to'liq javob beradigan, production-ready (Render, Railway yoki PythonAnywhere uchun moslashtirilgan) Flask ilovasini yaratamiz.
 
-Loyiha Strukturasi (Project Structure)
+Ushbu bosqichda loyihaga .env bilan ishlash, production sozlamalari (ProxyFix, Gunicorn, DEBUG=False), requirements.txt, Procfile va Web UI (HTML interfeys) qismlari qo'shiladi.
+
+Loyiha Strukturasi (Yaxshilangan shakli)
 Plaintext
 note_api_project/
 │
 ├── app/
-│   ├── __init__.py          # Flask app factory (create_app)
-│   ├── auth.py              # Login, logout va me endpointlari (auth_bp)
-│   └── notes.py             # Notes CRUD endpointlari (notes_bp)
+│   ├── __init__.py          # App factory + ProxyFix + Config
+│   ├── auth.py              # Auth Blueprint
+│   ├── notes.py             # Notes Blueprint
+│   ├── templates/           # Web UI uchun HTML fayllar
+│   │   ├── base.html
+│   │   ├── login.html
+│   │   └── index.html
+│   └── static/              # CSS/JS (ixtiyoriy)
 │
-├── README.md                # Loyihani ishga tushirish va curl misollari
-└── run.py                   # Loyihani ishga tushiruvchi asosiy fayl
+├── .env                     # Mahalliy sozlamalar (Maxfiy)
+├── .env.example             # .env namunasi (GitHub uchun)
+├── .gitignore               # Git-ga qo'shilmaydigan fayllar
+├── Procfile                 # Production server (Gunicorn) uchun buyruq
+├── requirements.txt         # Kerakli kutubxonalar ro'yxati
+├── runtime.txt              # Python versiyasi (PaaS uchun)
+├── run.py                   # Mahalliy ishga tushirish fayli
+└── README.md                # To'liq hujjatlashtirish
 Kod realizatsiyasi
-1. app/__init__.py (Application Factory)
-Ushbu faylda create_app() funksiyasi yaratiladi, xatoliklar JSON formatiga keltiriladi va Blueprint'lar ro'yxatdan o'tkaziladi.
+1. app/__init__.py
+Production xavfsizligi uchun ProxyFix qo'shildi va sozlamalar os.environ orqali yuklanadi.
 
 Python
-from flask import Flask, jsonify
+import os
+from flask import Flask, jsonify, render_template
+from werkzeug.middleware.proxy_fix import ProxyFix
+from dotenv import load_dotenv
+
+# .env faylini yuklash
+load_dotenv()
 
 def create_app():
     app = Flask(__name__)
     
-    # Session ishlashi uchun secret key (haqiqiy loyihada .env dan olinadi)
-    app.config['SECRET_KEY'] = 'super-secret-key-12345'
+    # .env dan o'qish, agar topilmasa default qiymat (faqat local uchun)
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'fallback-local-key-321')
     
-    # In-memory "ma'lumotlar bazasi" simulyatsiyasi
-    app.users = {
-        1: {"id": 1, "username": "ali"},
-        2: {"id": 2, "username": "vali"}
-    }
+    # Production uchun ProxyFix-ni yoqish
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+    
+    # In-memory DB
+    app.users = {1: {"id": 1, "username": "ali"}, 2: {"id": 2, "username": "vali"}}
     app.notes = {
-        1: {"id": 1, "title": "Bozorlik", "content": "Sut va non olish kerak", "user_id": 1},
-        2: {"id": 2, "title": "Darslar", "content": "Flask o'rganish", "user_id": 1},
-        3: {"id": 3, "title": "Kino", "content": "Yangi kinoni ko'rish", "user_id": 2}
+        1: {"id": 1, "title": "Bozorlik", "content": "Sut va non", "user_id": 1},
+        2: {"id": 2, "title": "Darslar", "content": "Flask o'rganish", "user_id": 1}
     }
-    app.note_id_counter = 4
+    app.note_id_counter = 3
 
-    # Global xatoliklarni JSON formatiga o'tkazish
-    @app.errorhandler(400)
-    def bad_request(e):
-        return jsonify({'error': 'Bad Request'}), 400
-
+    # Global Xatoliklar
     @app.errorhandler(401)
-    def unauthorized(e):
-        return jsonify({'error': 'Unauthorized'}), 401
-
+    def unauthorized(e): return jsonify({'error': 'Unauthorized'}), 401
     @app.errorhandler(403)
-    def forbidden(e):
-        return jsonify({'error': 'Forbidden'}), 403
-
+    def forbidden(e): return jsonify({'error': 'Forbidden'}), 403
     @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({'error': 'Not Found'}), 404
+    def not_found(e): return jsonify({'error': 'Not Found'}), 404
 
-    @app.errorhandler(405)
-    def method_not_allowed(e):
-        return jsonify({'error': 'Method Not Allowed'}), 405
-
-    # Blueprint'larni import qilish va ro'yxatdan o'tkazish
+    # Blueprints
     from app.auth import auth_bp
     from app.notes import notes_bp
-
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(notes_bp, url_prefix='/api/notes')
 
+    # Web UI Bosh sahifa (REST API bilan parallel ishlaydi)
+    @app.route('/')
+    def home():
+        return render_template('index.html')
+
+    @app.route('/login')
+    def login_page():
+        return render_template('login.html')
+
     return app
-2. app/auth.py (Authentication Blueprint)
-Python
-from flask import Blueprint, request, jsonify, session, current_app, abort
+2. HTML Shablonlar (Web UI qismi)
+Foydalanuvchi brauzer orqali kirganda API bilan fetch orqali muloqot qiladigan sodda Web UI.
 
-auth_bp = Blueprint('auth', __name__)
+app/templates/base.html:
 
-@auth_bp.route('/login', methods=['POST'])
-def login():
-    data = request.get_json() or {}
-    username = data.get('username')
-    
-    if not username:
-        return jsonify({'error': 'Username is required'}), 400
-        
-    # Foydalanuvchini qidirish
-    user = None
-    for u_id, u_data in current_app.users.items():
-        if u_data['username'] == username:
-            user = u_data
-            break
-            
-    if not user:
-        return jsonify({'error': 'User not found'}), 401
-        
-    # Sessionga saqlash
-    session['user_id'] = user['id']
-    return jsonify(user), 200
+HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Note App</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+</head>
+<body>
+    <header>
+        <nav><a href="/">Home</a> | <a href="/login">Login</a></nav>
+    </header>
+    <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
+app/templates/login.html:
 
-@auth_bp.route('/logout', methods=['POST'])
-def logout():
-    session.pop('user_id', None)
-    return '', 204
+HTML
+{% extends 'base.html' %}
+{% block content %}
+<h2>Tizimga kirish</h2>
+<input type="text" id="username" placeholder="Username (masalan: ali)">
+<button onclick="login()">Kirish</button>
 
-@auth_bp.route('/me', methods=['GET'])
-def me():
-    user_id = session.get('user_id')
-    if not user_id:
-        abort(401)
-        
-    user = current_app.users.get(user_id)
-    return jsonify(user), 200
-3. app/notes.py (Notes CRUD Blueprint)
-Python
-from flask import Blueprint, request, jsonify, session, current_app, abort
+<script>
+async function login() {
+    const username = document.getElementById('username').value;
+    const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username})
+    });
+    if (res.ok) window.location.href = '/';
+    else alert('Xatolik yuz berdi!');
+}
+</script>
+{% endblock %}
+app/templates/index.html:
 
-notes_bp = Blueprint('notes', __name__)
+HTML
+{% extends 'base.html' %}
+{% block content %}
+<h2>Mening eslatmalarim</h2>
+<div id="notes-list">Yuklanmoqda...</div>
 
-# Login bo'lganini tekshirish uchun yordamchi funksiya
-def get_current_user_id():
-    user_id = session.get('user_id')
-    if not user_id:
-        abort(401)
-    return user_id
+<hr>
+<h3>Yangi eslatma</h3>
+<input type="text" id="title" placeholder="Sarlavha"><br>
+<textarea id="content" placeholder="Matn"></textarea><br>
+<button onclick="addNote()">Qo'shish</button>
 
-@notes_bp.route('', methods=['GET'])
-def get_notes():
-    user_id = get_current_user_id()
-    
-    # Faqat joriy foydalanuvchiga tegishli notalarni filterlash
-    user_notes = [note for note in current_app.notes.values() if note['user_id'] == user_id]
-    return jsonify(user_notes), 200
-
-@notes_bp.route('', methods=['POST'])
-def create_note():
-    user_id = get_current_user_id()
-    data = request.get_json() or {}
-    
-    title = data.get('title')
-    content = data.get('content')
-    
-    if not title or not content:
-        return jsonify({'error': 'Title and content are required'}), 400
-        
-    new_id = current_app.note_id_counter
-    new_note = {
-        "id": new_id,
-        "title": title,
-        "content": content,
-        "user_id": user_id
+<script>
+async function loadNotes() {
+    const res = await fetch('/api/notes');
+    if (res.status === 401) {
+        document.getElementById('notes-list').innerHTML = "<p>Iltimos, avval <a href='/login'>login</a> qiling.</p>";
+        return;
     }
-    
-    current_app.notes[new_id] = new_note
-    current_app.note_id_counter += 1
-    
-    return jsonify(new_note), 201
+    const notes = await res.json();
+    let html = '';
+    notes.forEach(n => {
+        html += `<div><h4>${n.title}</h4><p>${n.content}</p></div>`;
+    });
+    document.getElementById('notes-list').innerHTML = html || '<p>Eslatmalar yo'q</p>';
+}
 
-@notes_bp.route('/<int:note_id>', methods=['GET', 'PUT', 'DELETE'])
-def note_detail(note_id):
-    user_id = get_current_user_id()
-    note = current_app.notes.get(note_id)
-    
-    if not note:
-        abort(404)
-        
-    # Boshqa foydalanuvchining notasiga ruxsat bermaslik
-    if note['user_id'] != user_id:
-        abort(403)
-        
-    if request.method == 'GET':
-        return jsonify(note), 200
-        
-    elif request.method == 'PUT':
-        data = request.get_json() or {}
-        title = data.get('title')
-        content = data.get('content')
-        
-        if not title or not content:
-            return jsonify({'error': 'Title and content are required'}), 400
-            
-        note['title'] = title
-        note['content'] = content
-        return jsonify(note), 200
-        
-    elif request.method == 'DELETE':
-        del current_app.notes[note_id]
-        return '', 204
-4. run.py
-Loyihani ishga tushirish uchun asosiy kirish nuqtasi.
+async function addNote() {
+    const title = document.getElementById('title').value;
+    const content = document.getElementById('content').value;
+    await fetch('/api/notes', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title, content})
+    });
+    loadNotes();
+}
+loadNotes();
+</script>
+{% endblock %}
+Configuration & Deployment Fayllari
+3. .gitignore
+GitHub-ga maxfiy kalitlar va virtual muhit chiqib ketishining oldini oladi.
 
+Plaintext
+.env
+__pycache__/
+*.pyc
+.venv/
+env/
+cookies.txt
+4. .env (Lokal uchun)
+Plaintext
+SECRET_KEY=9f82b3c4d5e6f7a8b9c0e1f2a3b4c5d6
+FLASK_DEBUG=True
+5. .env.example (GitHub uchun namuna)
+Plaintext
+SECRET_KEY=your_production_secret_key_here
+6. requirements.txt
+Plaintext
+Flask==3.0.2
+gunicorn==21.2.0
+python-dotenv==1.0.1
+werkzeug==3.0.1
+7. Procfile
+Render yoki Railway kabi PaaS platformalariga loyihani qanday ishga tushirishni o'rgatadi.
+
+Plaintext
+web: gunicorn run:app
+8. runtime.txt
+Plaintext
+python-3.11.5
+9. run.py
 Python
+import os
 from app import create_app
 
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
-5. README.md (Ishga tushirish va curl hujjatlari)
-Ushbu fayl API bilan qanday ishlashni va har bir endpoint uchun curl buyruqlarini o'z ichiga oladi. Session cookie faylini saqlash va yuborish uchun curl dagi -c cookies.txt va -b cookies.txt flaglaridan foydalaniladi.
-
+    # Mahalliy muhitda .env dagi FLASK_DEBUG o'qiladi, topilmasa False (Production xavfsizligi)
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() in ['true', '1']
+    app.run(debug=debug_mode, host='0.0.0.0', port=5000)
+10. README.md (To'liq yo'riqnoma va Hujjat)
 Markdown
-# Note Sharing JSON API
+# Note Sharing Web UI & REST API
 
-Bu session-based autentifikatsiyaga ega bo'lgan eslatmalar (notes) boshqaruv API tizimi.
+Ushbu loyiha eslatmalarni boshqarish uchun xavfsiz REST API va uning Web UI interfeysini taqdim etadi.
 
-## Ishga tushirish
+**Demo URL:** [https://your-app-name.onrender.com](https://your-app-name.onrender.com) *(O'zingizning demo havolangizni qo'ying)*
 
-1. Kutubxonalarni o'rnating:
-```bash
-pip install flask
-Serverni yoqing:
+---
+
+## Lokal O'rnatish Qadamlari
+
+1. **Repozitoriyani yuklab oling va ichiga kiring:**
+   ```bash
+   git clone <repo-url>
+   cd note_api_project
+Virtual muhit yarating va faollashtiring:
+
+Bash
+python -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+.venv\Scripts\activate     # Windows
+Kutubxonalarni o'rnating:
+
+Bash
+pip install -r requirements.txt
+Ekosistema sozlamalarini sozlang:
+.env.example faylini .env deb nusxalang va ichidagi SECRET_KEYni o'zgartiring.
+
+Bash
+cp .env.example .env
+Lokal serverni yoqing:
 
 Bash
 python run.py
-API Endpoints va curl Misollari
-1. Auth Blueprint (/api/auth/...)
-🔐 Login (POST)
-Foydalanuvchi sifatida tizimga kirish va cookielarni saqlash.
+Endi loyiha brauzerda http://127.0.0.1:5000 manzilida ochiladi.
 
+Production (Render.com) ga Deploy qilish Qadamlari
+Loyihani GitHub-ga yuklang (.env fayli yuklanmaganiga ishonch hosil qiling).
+
+Render.com ga kiring va New -> Web Service tanlang.
+
+GitHub repozitoriyangizni ulang.
+
+Quyidagi sozlamalarni kiriting:
+
+Runtime: Python 3
+
+Build Command: pip install -r requirements.txt
+
+Start Command: gunicorn run:app
+
+Advanced -> Environment Variables bo'limiga o'ting va quyidagi o'zgaruvchilarni qo'shing:
+
+SECRET_KEY = juda_uzun_va_murakkab_maxfiy_str
+
+FLASK_DEBUG = False (Avtomatik ravishda production rejimga o'tadi)
+
+Create Web Service tugmasini bosing va deploy tugashini kuting.
+
+API cURL Misollari (Ishlashini tekshirish)
+Auth API
 Bash
-curl -X POST [http://127.0.0.1:5000/api/auth/login](http://127.0.0.1:5000/api/auth/login) \
+# Login (Session yaratish)
+curl -X POST [https://your-app-name.onrender.com/api/auth/login](https://your-app-name.onrender.com/api/auth/login) \
      -H "Content-Type: application/json" \
      -d '{"username": "ali"}' \
      -c cookies.txt
-👤 Joriy foydalanuvchi (GET)
-Kirgan foydalanuvchi ma'lumotlarini olish (Cookie talab qilinadi).
 
+# Me (Joriy foydalanuvchi)
+curl -X GET [https://your-app-name.onrender.com/api/auth/me](https://your-app-name.onrender.com/api/auth/me) -b cookies.txt
+Notes CRUD API
 Bash
-curl -X GET [http://127.0.0.1:5000/api/auth/me](http://127.0.0.1:5000/api/auth/me) \
-     -b cookies.txt
-🚪 Logout (POST)
-Tizimdan chiqish (Sessionni o'chirish).
+# Barcha notalarni ko'rish
+curl -X GET [https://your-app-name.onrender.com/api/notes](https://your-app-name.onrender.com/api/notes) -b cookies.txt
 
-Bash
-curl -X POST [http://127.0.0.1:5000/api/auth/logout](http://127.0.0.1:5000/api/auth/logout) \
-     -b cookies.txt
-2. Notes Blueprint (/api/notes/...)
-📝 Barcha eslatmalarni olish (GET)
-Faqat tizimga kirgan foydalanuvchining eslatmalarini qaytaradi.
-
-Bash
-curl -X GET [http://127.0.0.1:5000/api/notes](http://127.0.0.1:5000/api/notes) \
-     -b cookies.txt
-➕ Yangi eslatma yaratish (POST)
-Bash
-curl -X POST [http://127.0.0.1:5000/api/notes](http://127.0.0.1:5000/api/notes) \
+# Yangi nota yaratish
+curl -X POST [https://your-app-name.onrender.com/api/notes](https://your-app-name.onrender.com/api/notes) \
      -H "Content-Type: application/json" \
-     -d '{"title": "Yangi Nota", "content": "Bu test eslatma mazmuni"}' \
+     -d '{"title": "Prod test", "content": "Production matni"}' \
      -b cookies.txt
-📖 Aniq bir eslatmani ko'rish (GET)
-Bash
-curl -X GET [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1) \
-     -b cookies.txt
-✏️ Eslatmani to'liq yangilash (PUT)
-Bash
-curl -X PUT [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1) \
-     -H "Content-Type: application/json" \
-     -d '{"title": "Yangilangan Sarlavha", "content": "Yangilangan matn"}' \
-     -b cookies.txt
-❌ Eslatmani o'chirish (DELETE)
-Bash
-curl -X DELETE [http://127.0.0.1:5000/api/notes/1](http://127.0.0.1:5000/api/notes/1) \
-     -b cookies.txt
-Xatolik Holatlari (JSON Error Responses)
-Agar noto'g'ri ID berilsa yoki login qilmasdan so'rov yuborilsa, tizim quyidagicha toza JSON javob qaytaradi:
-
-401 Unauthorized: {"error": "Unauthorized"}
-
-403 Forbidden: {"error": "Forbidden"} (Boshqa odamning notasini o'chirmoqchi yoki ko'rmoqchi bo'lganda)
-
-404 Not Found: {"error": "Not Found"}
